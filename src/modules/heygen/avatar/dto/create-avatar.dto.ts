@@ -34,4 +34,12 @@ export class CreateAvatarDto {
   @IsOptional()
   @IsBoolean()
   is_instant?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  is_premium?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  is_free?: boolean;
 }

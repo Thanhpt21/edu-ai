@@ -1,67 +1,130 @@
-import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
-import { PrismaService } from 'prisma/prisma.service';
-import { CreateUserRoleDto } from './dto/create-user-role.dto';
+// user-role.service.ts
+import { Injectable, ConflictException, NotFoundException } from '@nestjs/common'
+import { PrismaService } from 'prisma/prisma.service'
+import { CreateUserRoleDto } from './dto/create-user-role.dto'
 
 @Injectable()
 export class UserRoleService {
   constructor(private prisma: PrismaService) {}
 
-  // Thêm vai trò cho người dùng
   async addRole(dto: CreateUserRoleDto) {
-    // Kiểm tra người dùng có tồn tại
-    const user = await this.prisma.user.findUnique({ where: { id: dto.userId } });
-    if (!user) throw new NotFoundException('Người dùng không tồn tại');
-
-    // Kiểm tra vai trò có tồn tại
-    const role = await this.prisma.role.findUnique({ where: { id: dto.roleId } });
-    if (!role) throw new NotFoundException('Vai trò không tồn tại');
-
-    // Kiểm tra đã có chưa
-    const existing = await this.prisma.userRole.findUnique({
-      where: { userId_roleId: { userId: dto.userId, roleId: dto.roleId } },
-    });
-    if (existing) throw new BadRequestException('Vai trò đã được gán cho người dùng');
-
-    // Thêm vai trò vào người dùng
-    const userRole = await this.prisma.userRole.create({ data: dto });
-
-    return {
-      success: true,
-      message: 'Thêm vai trò cho người dùng thành công',
-      data: userRole,
-    };
+  // Kiểm tra user tồn tại
+  const user = await this.prisma.user.findUnique({
+    where: { id: dto.userId },
+  })
+  if (!user) {
+    throw new NotFoundException('User không tồn tại')
   }
 
-  // Xóa vai trò của người dùng
-  async removeRole(userId: number, roleId: number) {
-    const existing = await this.prisma.userRole.findUnique({
-      where: { userId_roleId: { userId, roleId } },
-    });
-    if (!existing) throw new NotFoundException('Vai trò chưa được gán cho người dùng');
-
-    await this.prisma.userRole.delete({
-      where: { userId_roleId: { userId, roleId } },
-    });
-
-    return {
-      success: true,
-      message: 'Xóa vai trò khỏi người dùng thành công',
-      data: null,
-    };
+  // Kiểm tra role tồn tại
+  const role = await this.prisma.role.findUnique({
+    where: { id: dto.roleId },
+  })
+  if (!role) {
+    throw new NotFoundException('Role không tồn tại')
   }
 
-  // Lấy danh sách vai trò của người dùng
-  async getRolesOfUser(userId: number) {
-    const user = await this.prisma.user.findUnique({
-      where: { id: userId },
-      include: { roles: { include: { role: true } } },
-    });
-    if (!user) throw new NotFoundException('Người dùng không tồn tại');
+  // Kiểm tra đã tồn tại user-role chưa
+  const existingUserRole = await this.prisma.userRole.findUnique({
+    where: {
+      userId_roleId: { // Sử dụng composite unique constraint
+        userId: dto.userId,
+        roleId: dto.roleId,
+      },
+    },
+  })
 
-    return {
-      success: true,
-      message: 'Lấy danh sách vai trò của người dùng thành công',
-      data: user.roles.map((ur) => ur.role),
-    };
+  if (existingUserRole) {
+    throw new ConflictException('User đã có role này')
   }
+
+  // Tạo user-role
+  const userRole = await this.prisma.userRole.create({
+    data: {
+      userId: dto.userId,
+      roleId: dto.roleId,
+    },
+    include: {
+      role: true,
+      user: {
+        select: {
+          id: true,
+          name: true,
+          email: true,
+        },
+      },
+    },
+  })
+
+  return {
+    success: true,
+    message: 'Thêm role cho user thành công',
+    data: userRole,
+  }
+}
+
+async removeRole(userId: number, roleId: number) {
+  // Kiểm tra user-role tồn tại
+  const userRole = await this.prisma.userRole.findUnique({
+    where: {
+      userId_roleId: { // Sử dụng composite unique constraint
+        userId,
+        roleId,
+      },
+    },
+  })
+
+  if (!userRole) {
+    throw new NotFoundException('User không có role này')
+  }
+
+  // Xóa user-role
+  await this.prisma.userRole.delete({
+    where: {
+      userId_roleId: { // Sử dụng composite unique constraint
+        userId,
+        roleId,
+      },
+    },
+  })
+
+  return {
+    success: true,
+    message: 'Xóa role khỏi user thành công',
+    data: null,
+  }
+}
+
+async getRolesOfUser(userId: number) {
+  // Kiểm tra user tồn tại
+  const user = await this.prisma.user.findUnique({
+    where: { id: userId },
+  })
+  if (!user) {
+    throw new NotFoundException('User không tồn tại')
+  }
+
+  // Lấy danh sách roles của user
+  const userRoles = await this.prisma.userRole.findMany({
+    where: { userId },
+    include: {
+      role: {
+        select: {
+          id: true,
+          name: true,
+          description: true,
+        },
+      },
+    },
+    orderBy: {
+      createdAt: 'desc',
+    },
+  })
+
+  return {
+    success: true,
+    message: 'Lấy danh sách roles của user thành công',
+    data: userRoles,
+  }
+}
 }

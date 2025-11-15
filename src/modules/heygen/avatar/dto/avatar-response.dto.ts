@@ -11,6 +11,8 @@ export class AvatarResponseDto {
   avatar_style: string;
   is_customized: boolean;
   is_instant: boolean;
+  is_premium: boolean;
+  is_free: boolean;
   createdAt: Date;
   updatedAt: Date;
 
@@ -25,6 +27,8 @@ export class AvatarResponseDto {
     this.avatar_style = avatar.avatar_style;
     this.is_customized = avatar.is_customized;
     this.is_instant = avatar.is_instant;
+    this.is_premium = avatar.is_premium;
+    this.is_free = avatar.is_free;
     this.createdAt = avatar.createdAt;
     this.updatedAt = avatar.updatedAt;
   }

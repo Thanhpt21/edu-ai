@@ -5,6 +5,7 @@ generator client {
 datasource db {
   provider  = "postgresql"
   url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
 }
 
 model User {
@@ -42,6 +43,7 @@ model User {
   heygenVideos        HeygenVideo[]
   heygenAssets        HeygenAsset[]
   heygenTemplates     HeygenTemplate[] 
+  avatarIVVideos   HeygenAvatarIVVideo[]
 }
 
 model Role {
@@ -564,6 +566,8 @@ model HeygenAvatar {
   avatar_style    String   @default("normal")
   is_customized   Boolean  @default(false)
   is_instant      Boolean  @default(false)
+  is_premium      Boolean  @default(false)
+  is_free         Boolean  @default(true)
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
   
@@ -571,6 +575,8 @@ model HeygenAvatar {
   templates HeygenTemplate[]
   
   @@index([avatarId])
+  @@index([is_premium])   
+  @@index([is_free])      
 }
 
 model HeygenVoice {
@@ -583,6 +589,11 @@ model HeygenVoice {
   language_code   String?
   preview_audio   String?
   is_customized   Boolean  @default(false)
+
+  is_premium      Boolean  @default(false)
+  is_free         Boolean  @default(true)
+  tier            String?  @default("free")
+
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
   
@@ -591,6 +602,9 @@ model HeygenVoice {
   
   @@index([voiceId])
   @@index([language])
+  @@index([is_premium])    
+  @@index([is_free])       
+  @@index([tier])          
 }
 
 model HeygenVideo {
@@ -615,6 +629,10 @@ model HeygenVideo {
   dimensionWidth      Int              @default(1280)
   dimensionHeight     Int              @default(720)
   isWebM              Boolean          @default(false)  // Transparent WebM format
+
+  supabaseVideoUrl String?   // URL video trên Supabase
+  isDownloaded     Boolean   @default(false) // Đã download chưa
+  downloadedAt     DateTime? // Thời điểm download
   
   // Result
   videoUrl            String?
@@ -685,6 +703,32 @@ model HeygenTemplate {
   
   @@index([isPublic])
   @@index([createdBy])
+}
+
+model HeygenAvatarIVVideo {
+  id               Int       @id @default(autoincrement())
+  videoId          String?   @unique  // video_id từ HeyGen response
+  title            String    // video_title
+  imageKey         String    // image_key từ upload
+  script           String
+  voiceId          String    // voice_id từ HeygenVoice
+  language         String    @default("vi")
+  customMotion     String?   // custom_motion_prompt
+  enhanceMotion    Boolean   @default(false) // enhance_custom_motion_prompt
+  status           String    @default("processing") // processing, completed, failed
+  videoUrl         String?   // video_url từ HeyGen
+  errorMessage     String?   // error message nếu failed
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  // Liên kết với user (nếu có hệ thống user)
+  userId           Int?
+  user             User?     @relation(fields: [userId], references: [id])
+
+  @@index([videoId])
+  @@index([status])
+  @@index([userId])
+  @@index([createdAt])
 }
 
 

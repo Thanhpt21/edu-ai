@@ -2,12 +2,12 @@ import { Injectable } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { VideosService } from 'src/modules/heygen/video/video.service';
 
-
 @Injectable()
 export class VideoSyncTask {
   constructor(private readonly videosService: VideosService) {}
 
-  @Cron(CronExpression.EVERY_5_MINUTES)
+  // MỖI 1 PHÚT
+  @Cron(CronExpression.EVERY_MINUTE)
   async syncPendingVideos() {
     const startTime = new Date();
     console.log(`🕒 [CRON START] Video sync started at: ${startTime.toISOString()}`);
@@ -21,10 +21,8 @@ export class VideoSyncTask {
     }
   }
 
-  // Test ngay khi start
   async onModuleInit() {
     console.log('🚀 VideoSyncTask initialized');
-    // Chạy test ngay
     await this.syncPendingVideos();
   }
 }

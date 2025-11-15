@@ -16,11 +16,11 @@ RUN npm install --only=production
 RUN npx prisma generate
 COPY --from=build /app/dist ./dist
 
-# ✅ Sửa thành port 8080 và thêm env
-ENV PORT=8080
+
+ENV PORT=8081
 ENV NODE_ENV=production
 
-EXPOSE 8080
+EXPOSE 8081
 
 CMD ["node", "dist/src/main.js"]
 

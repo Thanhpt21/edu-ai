@@ -32,6 +32,46 @@ export class VoicesController {
     return this.voicesService.syncVoicesFromHeyGen();
   }
 
+   @Get('free/list')
+  async getFreeVoices(
+    @Query('page') page: number = 1,
+    @Query('limit') limit: number = 10,
+    @Query('search') search: string = '',
+    @Query('language') language: string = '',
+  ) {
+    return this.voicesService.getFreeVoices(+page, +limit, search, language);
+  }
+
+  // Lấy danh sách voice premium
+  @Get('premium/list')
+  async getPremiumVoices(
+    @Query('page') page: number = 1,
+    @Query('limit') limit: number = 10,
+    @Query('search') search: string = '',
+    @Query('language') language: string = '',
+  ) {
+    return this.voicesService.getPremiumVoices(+page, +limit, search, language);
+  }
+
+  // Lấy tất cả voice miễn phí (không phân trang)
+  @Get('free/all')
+  async getAllFreeVoices(
+    @Query('search') search: string = '',
+    @Query('language') language: string = '',
+  ) {
+    return this.voicesService.getAllFreeVoices(search, language);
+  }
+
+  // Lấy voice theo ngôn ngữ và tier
+  @Get('language/:language/tier/:tier')
+  async getVoicesByLanguageAndTier(
+    @Param('language') language: string,
+    @Param('tier') tier: string,
+  ) {
+    const isPremium = tier === 'premium';
+    return this.voicesService.getVoicesByLanguageAndTier(language, isPremium);
+  }
+
   // Tạo voice mới
   @Post()
   @UseGuards(JwtAuthGuard)

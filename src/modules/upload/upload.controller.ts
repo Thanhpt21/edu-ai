@@ -1,5 +1,5 @@
 // upload.controller.ts
-import { Controller, Post, UploadedFile, UseInterceptors, BadRequestException } from '@nestjs/common';
+import { Controller, Post, UploadedFile, UseInterceptors, BadRequestException, Delete, Body } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { UploadService } from './upload.service';
 
@@ -33,6 +33,22 @@ export class UploadController {
       success: true,
       message: 'Upload ảnh thành công',
       data: { url: imageUrl },
+    };
+  }
+
+  @Delete('image')
+  async deleteImage(@Body() body: { url: string }) {
+    const { url } = body;
+    
+    if (!url) {
+      throw new BadRequestException('URL ảnh không được để trống');
+    }
+
+    await this.uploadService.deleteLocalImage(url);
+    
+    return {
+      success: true,
+      message: 'Xóa ảnh thành công',
     };
   }
 }

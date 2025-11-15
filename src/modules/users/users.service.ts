@@ -32,6 +32,8 @@ export class UsersService {
       password: hashedPassword,
       role,
       avatar,
+      phone: createUserDto.phone || null,        // Đảm bảo phone được truyền
+      gender: createUserDto.gender || null,      // Đảm bảo gender được truyền
     };
 
     const user = await this.prisma.user.create({
@@ -61,17 +63,31 @@ export class UsersService {
       this.prisma.user.findMany({
         where,
         skip,
-        take: limit,
+        take: Number(limit),
         orderBy: { createdAt: 'desc' },
         select: {
           id: true,
           name: true,
           email: true,
+          phone: true,      
+          gender: true,     
           avatar: true,
           isActive: true,
           type_account: true,
+          role: true, 
           createdAt: true,
           updatedAt: true,
+          roles: { 
+            include: {
+              role: {
+                select: {
+                  id: true,
+                  name: true,
+                  description: true,
+                },
+              },
+            },
+          },
           chatConversations: {
             select: { id: true },
             take: 1,
@@ -114,16 +130,34 @@ export class UsersService {
     const users = await this.prisma.user.findMany({
       where,
       orderBy: { createdAt: 'desc' },
-      select: {
-        id: true,
-        name: true,
-        email: true,
-        avatar: true,
-        isActive: true,
-        type_account: true,
-        createdAt: true,
-        updatedAt: true,
-      },
+       select: {
+          id: true,
+          name: true,
+          email: true,
+          phone: true,      
+          gender: true,     
+          avatar: true,
+          isActive: true,
+          type_account: true,
+          role: true, 
+          createdAt: true,
+          updatedAt: true,
+          roles: { 
+            include: {
+              role: {
+                select: {
+                  id: true,
+                  name: true,
+                  description: true,
+                },
+              },
+            },
+          },
+          chatConversations: {
+            select: { id: true },
+            take: 1,
+          },
+        },
     });
 
     return {

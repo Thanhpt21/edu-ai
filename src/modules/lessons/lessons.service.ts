@@ -64,7 +64,7 @@ export class LessonsService {
       this.prisma.lesson.findMany({
         where,
         skip,
-        take: limit,
+        take: Number(limit),
         include: this.getLessonInclude(),
         orderBy: [{ courseId: 'asc' }, { order: 'asc' }],
       }),
@@ -117,6 +117,23 @@ export class LessonsService {
       where: { id },
       data: { totalViews: { increment: 1 } }
     });
+
+    return {
+      success: true,
+      message: 'Lấy lesson thành công',
+      data: this.formatLessonResponse(lesson),
+    };
+  }
+
+  async getLessonByIdForAdmin(id: number) {
+    const lesson = await this.prisma.lesson.findUnique({
+      where: { id },
+      include: this.getLessonInclude(),
+    });
+    
+    if (!lesson) throw new NotFoundException('Lesson không tồn tại');
+
+    // KHÔNG tăng view count cho admin
 
     return {
       success: true,

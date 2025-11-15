@@ -1,5 +1,6 @@
+import { CourseLevel } from '@prisma/client';
 import { IsOptional, IsString, IsNumber, IsEnum, IsBoolean } from 'class-validator';
-import { CourseLevel } from './create-course.dto';
+
 
 export class CourseQueryDto {
   @IsOptional()

@@ -33,6 +33,31 @@ export class AvatarsController {
   async debugHeyGenAvatars() {
     return this.avatarsService.debugHeyGenAvatars();
   }
+
+    @Get('free/list')
+  async getFreeAvatars(
+    @Query('page') page: number = 1,
+    @Query('limit') limit: number = 10,
+    @Query('search') search: string = '',
+  ) {
+    return this.avatarsService.getFreeAvatars(+page, +limit, search);
+  }
+
+  // Lấy danh sách avatar premium
+  @Get('premium/list')
+  async getPremiumAvatars(
+    @Query('page') page: number = 1,
+    @Query('limit') limit: number = 10,
+    @Query('search') search: string = '',
+  ) {
+    return this.avatarsService.getPremiumAvatars(+page, +limit, search);
+  }
+
+  // Lấy tất cả avatar miễn phí (không phân trang)
+  @Get('free/all')
+  async getAllFreeAvatars(@Query('search') search: string = '') {
+    return this.avatarsService.getAllFreeAvatars(search);
+  }
   
   // Tạo avatar mới
   @Post()

@@ -12,21 +12,19 @@ export class UserResponseDto {
   type_account: string;
   createdAt: Date;
   updatedAt: Date;
-  tenantId?: number;
-  conversationId: number | null;  // Thêm trường conversationId
-  tokenAI?: number;
+  conversationId: number | null;
 
-  constructor(user: User, conversationId: number | null = null) {  // Nhận conversationId từ ngoài
+  constructor(user: User & { conversationId?: number | null }) {  // Sửa constructor
     this.id = user.id;
     this.name = user.name;
     this.email = user.email;
-    this.phone = user.phone;
-    this.gender = user.gender;
+    this.phone = user.phone;        // Thêm phone
+    this.gender = user.gender;      // Thêm gender
     this.avatar = user.avatar;
     this.isActive = user.isActive;
     this.type_account = user.type_account;
     this.createdAt = user.createdAt;
     this.updatedAt = user.updatedAt;
-    this.conversationId = conversationId;  // Gán conversationId
+    this.conversationId = (user as any).conversationId || null;  // Lấy conversationId từ user object
   }
 }

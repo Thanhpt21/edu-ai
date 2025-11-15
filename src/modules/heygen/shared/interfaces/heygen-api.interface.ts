@@ -49,6 +49,17 @@ export interface IVideoGenerationRequest {
       speed?: number;
       pitch?: number;
     };
+     caption?: {
+      enabled: boolean;
+      style?: {
+        font_family?: string;
+        font_size?: number;
+        color?: string;
+        background_color?: string;
+        position?: 'top' | 'middle' | 'bottom';
+        alignment?: 'left' | 'center' | 'right';
+      };
+    };
     background?: {
       type: 'color' | 'image' | 'video';
       value?: string; // For color

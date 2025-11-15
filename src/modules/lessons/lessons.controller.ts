@@ -45,6 +45,12 @@ export class LessonsController {
     return this.lessonsService.getLessonById(id);
   }
 
+  @Get('admin/:id')
+  @UseGuards(JwtAuthGuard)
+  async getLessonByIdForAdmin(@Param('id', ParseIntPipe) id: number) {
+    return this.lessonsService.getLessonByIdForAdmin(id);
+  }
+
   // Cập nhật lesson
   @Put(':id')
   @UseGuards(JwtAuthGuard)

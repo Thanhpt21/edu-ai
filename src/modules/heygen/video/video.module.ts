@@ -5,6 +5,7 @@ import { VideosService } from './video.service';
 import { HeyGenApiService } from '../shared/heygen-api.service';
 import { HttpModule } from '@nestjs/axios';
 import { VideoSyncTask } from 'src/task/video-sync.task';
+import { UploadService } from 'src/modules/upload/upload.service';
 // Thêm nếu dùng queue
 // import { VideosProcessorModule } from './videos.processor.module';
 
@@ -14,7 +15,7 @@ import { VideoSyncTask } from 'src/task/video-sync.task';
     HttpModule, // THÊM DÒNG NÀY
   ],
   controllers: [VideosController],
-  providers: [VideosService, PrismaService, HeyGenApiService, VideoSyncTask],
+  providers: [VideosService, PrismaService, HeyGenApiService, VideoSyncTask, UploadService],
   exports: [VideosService],
 })
 export class VideosModule {}

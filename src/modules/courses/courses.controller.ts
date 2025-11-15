@@ -10,7 +10,10 @@ import {
   ParseIntPipe,
   UseGuards,
   Patch,
+  UseInterceptors,
+  UploadedFile,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { CoursesService } from './courses.service';
 import { CreateCourseDto } from './dto/create-course.dto';
 import { UpdateCourseDto } from './dto/update-course.dto';
@@ -24,14 +27,23 @@ export class CoursesController {
   // Tạo course mới
   @Post()
   @UseGuards(JwtAuthGuard)
-  async createCourse(@Body() dto: CreateCourseDto) {
-    return this.coursesService.createCourse(dto);
+  @UseInterceptors(FileInterceptor('thumbnail'))
+  async createCourse(
+    @Body() dto: CreateCourseDto,
+    @UploadedFile() file?: Express.Multer.File,
+  ) {
+    return this.coursesService.createCourse(dto, file);
   }
 
   // Lấy danh sách courses
   @Get()
   async getCourses(@Query() query: CourseQueryDto) {
     return this.coursesService.getCourses(query);
+  }
+
+  @Get('all/list')
+  async getAllCourses(@Query() query: CourseQueryDto) {
+    return this.coursesService.getAll(query);
   }
 
   // Lấy course theo id
@@ -49,11 +61,13 @@ export class CoursesController {
   // Cập nhật course
   @Put(':id')
   @UseGuards(JwtAuthGuard)
+  @UseInterceptors(FileInterceptor('thumbnail'))
   async updateCourse(
     @Param('id', ParseIntPipe) id: number,
-    @Body() dto: UpdateCourseDto
+    @Body() dto: UpdateCourseDto,
+    @UploadedFile() file?: Express.Multer.File,
   ) {
-    return this.coursesService.updateCourse(id, dto);
+    return this.coursesService.updateCourse(id, dto, file);
   }
 
   // Xóa course

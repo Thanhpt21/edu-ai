@@ -8,10 +8,12 @@ import { VideoResponseDto } from './dto/video-response.dto';
 import { Prisma, HeygenVideoStatus } from '@prisma/client';
 import { HeyGenApiService } from '../shared/heygen-api.service';
 import { IVideoGenerationRequest } from '../shared/interfaces/heygen-api.interface';
+import { UploadService } from 'src/modules/upload/upload.service';
 
 @Injectable()
 export class VideosService {
   constructor(
+    private uploadService: UploadService,
     private prisma: PrismaService,
     private heygenApiService: HeyGenApiService,
   ) {}
@@ -63,6 +65,17 @@ async generateVideo(dto: GenerateVideoDto, userId: number) {
             type: 'text' as const,
             input_text: dto.inputText,
             voice_id: voice.voiceId
+          },
+          caption: {
+            enabled: true,
+            style: {
+              font_family: 'Arial',
+              font_size: 24,
+              color: '#FFFFFF',
+              background_color: '#00000080',
+              position: 'bottom', // 'top' | 'middle' | 'bottom'
+              alignment: 'center' // 'left' | 'center' | 'right'
+            }
           },
           ...(dto.backgroundType && {
             background: {
@@ -164,11 +177,11 @@ async generateVideo(dto: GenerateVideoDto, userId: number) {
               ],
             }
           : {},
-        status ? { status } : {},
-        userId ? { userId } : {},
-        lessonId ? { lessonId } : {},
-        avatarId ? { avatarId } : {},
-        voiceId ? { voiceId } : {},
+       status ? { status } : {},
+      userId ? { userId: Number(userId) } : {}, // CHUYỂN SANG NUMBER
+      lessonId ? { lessonId: Number(lessonId) } : {}, // CHUYỂN SANG NUMBER
+      avatarId ? { avatarId: Number(avatarId) } : {}, // CHUYỂN SANG NUMBER
+      voiceId ? { voiceId: Number(voiceId) } : {}, // CHUYỂN SANG NUMBER
       ],
     };
 
@@ -540,69 +553,28 @@ async generateVideo(dto: GenerateVideoDto, userId: number) {
     return Math.random().toString(36).substring(2) + Date.now().toString(36);
   }
 
-  // Đồng bộ status với HeyGen
-async syncVideoStatus(id: number) {
-  const video = await this.prisma.heygenVideo.findUnique({ 
-    where: { id } 
-  });
-  if (!video) throw new NotFoundException('Video không tồn tại');
-
-  try {
-    // Lấy status mới nhất từ HeyGen
-    const heygenStatus = await this.heygenApiService.getVideoStatus(video.videoId);
-    
-    let updateData: any = {
-      status: heygenStatus.status.toUpperCase() as HeygenVideoStatus,
-    };
-
-    // Nếu video completed, cập nhật thêm thông tin
-    if (heygenStatus.status === 'completed') {
-      // Lấy shareable URL từ HeyGen
-      const shareResponse = await this.heygenApiService.getShareableUrl(video.videoId);
-      
-      updateData = {
-        ...updateData,
-        videoUrl: shareResponse.data, // URL từ endpoint share
-        status: HeygenVideoStatus.COMPLETED,
-        completedAt: new Date(),
-      };
-    } else if (heygenStatus.status === 'failed') {
-      updateData = {
-        ...updateData,
-        status: HeygenVideoStatus.FAILED,
-        errorMessage: heygenStatus.error_message || 'Video generation failed',
-      };
-    }
-
-    // Cập nhật database
-    const updatedVideo = await this.prisma.heygenVideo.update({
-      where: { id },
-      data: updateData,
-    });
-
-    return {
-      success: true,
-      message: 'Đồng bộ trạng thái thành công',
-      data: new VideoResponseDto(updatedVideo),
-    };
-  } catch (error) {
-    throw new InternalServerErrorException(`Lỗi đồng bộ trạng thái: ${error.message}`);
-  }
-}
-
 // Đồng bộ nhiều videos
+// Trong videos.service.ts
 async syncPendingVideos() {
-  const pendingVideos = await this.prisma.heygenVideo.findMany({
+  console.log(`🔍 [SYNC] Bắt đầu đồng bộ video đang chờ...`);
+  
+  // ĐỒNG BỘ CẢ PENDING VÀ PROCESSING
+  const videosToSync = await this.prisma.heygenVideo.findMany({
     where: {
-      status: HeygenVideoStatus.PENDING,
+      status: {
+        in: [HeygenVideoStatus.PENDING, HeygenVideoStatus.PROCESSING] // THÊM PROCESSING
+      },
       createdAt: {
-        gte: new Date(Date.now() - 24 * 60 * 60 * 1000), // Trong 24h qua
+        gte: new Date(Date.now() - 24 * 60 * 60 * 1000),
       },
     },
-    take: 50, // Giới hạn số lượng
+    take: 50,
   });
 
-  // Khai báo type cho results
+  console.log(`🔍 [SYNC] Tìm thấy ${videosToSync.length} video cần đồng bộ:`, 
+    videosToSync.map(v => ({ id: v.id, videoId: v.videoId, status: v.status }))
+  );
+
   const results: Array<{
     videoId: string;
     success: boolean;
@@ -610,15 +582,18 @@ async syncPendingVideos() {
     error?: string;
   }> = [];
 
-  for (const video of pendingVideos) {
+  for (const video of videosToSync) {
     try {
+      console.log(`🔄 [SYNC] Đang đồng bộ video ${video.videoId} (${video.status})...`);
       const result = await this.syncVideoStatus(video.id);
       results.push({ 
         videoId: video.videoId, 
         success: true, 
         data: result 
       });
+      console.log(`✅ [SYNC] Đồng bộ video ${video.videoId} thành công`);
     } catch (error) {
+      console.error(`❌ [SYNC] Lỗi đồng bộ video ${video.videoId}:`, error);
       results.push({ 
         videoId: video.videoId, 
         success: false, 
@@ -633,4 +608,403 @@ async syncPendingVideos() {
     data: results,
   };
 }
+
+async downloadAndSaveVideoToSupabase(videoId: string, videoUrl?: string): Promise<{ success: boolean; supabaseUrl?: string; error?: string }> {
+  console.log(`🚀 [downloadAndSaveVideoToSupabase] BẮT ĐẦU với videoId: ${videoId}`);
+  
+  try {
+    console.log(`🔍 [1/6] Tìm video trong database...`);
+    const video = await this.prisma.heygenVideo.findUnique({
+      where: { videoId },
+    });
+
+    if (!video) {
+      throw new Error('Video not found in database');
+    }
+
+    // 🎯 ƯU TIÊN URL TRUYỀN VÀO, NẾU KHÔNG CÓ THÌ LẤY TỪ DATABASE
+    const downloadUrl = videoUrl || video.videoUrl;
+    console.log(`📥 [2/6] URL để download: ${downloadUrl}`);
+
+    if (!downloadUrl) {
+      throw new Error('No video URL provided');
+    }
+
+    if (!this.isValidDownloadableUrl(downloadUrl)) {
+      throw new Error('Invalid downloadable URL');
+    }
+
+    console.log(`✅ [2/6] Downloadable URL hợp lệ`);
+
+    // DOWNLOAD VÀ UPLOAD LÊN SUPABASE
+    console.log(`🚀 [3/6] Download và upload lên Supabase...`);
+    const supabaseVideoUrl = await this.uploadService.autoUploadHeygenVideo(
+      downloadUrl,
+      videoId,
+      video.lessonId
+    );
+
+    console.log(`✅ [4/6] Upload thành công: ${supabaseVideoUrl}`);
+
+    // KIỂM TRA SUPABASE URL
+    if (!supabaseVideoUrl || !supabaseVideoUrl.includes('supabase')) {
+      throw new Error('Invalid Supabase URL returned');
+    }
+
+    console.log(`🎉 [5/6] Download và upload hoàn tất!`);
+    return {
+      success: true,
+      supabaseUrl: supabaseVideoUrl,
+    };
+
+  } catch (error) {
+    console.error(`💥 [downloadAndSaveVideoToSupabase] LỖI:`, error.message);
+    return {
+      success: false,
+      error: error.message,
+    };
+  }
+}
+
+// CẬP NHẬT METHOD syncVideoStatus để tự động download khi video hoàn thành
+async syncVideoStatus(id: number) {
+  const video = await this.prisma.heygenVideo.findUnique({ 
+    where: { id } 
+  });
+  if (!video) throw new NotFoundException('Video không tồn tại');
+  
+  console.log(`🔍 [SYNC STATUS] Bắt đầu sync video:`, {
+    id: video.id,
+    videoId: video.videoId,
+    currentStatus: video.status,
+    currentVideoUrl: video.videoUrl
+  });
+
+  try {
+    const heygenStatus = await this.heygenApiService.getVideoStatus(video.videoId);
+
+    console.log(`🔍 [SYNC STATUS] Heygen trả về:`, {
+      videoId: video.videoId,
+      status: heygenStatus.status,
+      video_url: heygenStatus.video_url ? 'CÓ' : 'KHÔNG',
+      duration: heygenStatus.duration
+    });
+
+    // 🎯 KHỞI TẠO UPDATE DATA CƠ BẢN
+    let updateData: any = {
+      status: heygenStatus.status.toUpperCase() as HeygenVideoStatus,
+    };
+
+    if (heygenStatus.status === 'completed') {
+      console.log(`🎉 [SYNC STATUS] Video ${video.videoId} đã hoàn thành!`);
+      
+      // 🎯 LẤY DOWNLOADABLE URL TỪ HEYGEN
+      const videoUrl = heygenStatus.video_url;
+      
+      console.log(`🔗 [SYNC STATUS] Downloadable URL từ HeyGen: ${videoUrl}`);
+
+      // 🚨 QUAN TRỌNG: CẬP NHẬT DATABASE VỚI URL MỚI TRƯỚC KHI DOWNLOAD
+      console.log(`💾 [SYNC STATUS] Cập nhật database với URL mới...`);
+      await this.prisma.heygenVideo.update({
+        where: { id },
+        data: {
+          videoUrl: videoUrl,
+          status: HeygenVideoStatus.COMPLETED,
+          completedAt: new Date(),
+        },
+      });
+
+      console.log(`✅ [SYNC STATUS] Đã cập nhật database với URL mới`);
+
+      // 🎯 DOWNLOAD NẾU CÓ DOWNLOADABLE URL
+      if (videoUrl && this.isValidDownloadableUrl(videoUrl)) {
+        console.log(`🚀 [SYNC STATUS] Có downloadable URL, bắt đầu download...`);
+        try {
+          // 🎯 TRUYỀN URL MỚI TRỰC TIẾP VÀO downloadAndSaveVideoToSupabase
+          const downloadResult = await this.downloadAndSaveVideoToSupabase(video.videoId, videoUrl);
+          
+          if (downloadResult.success) {
+            console.log(`✅ [SYNC STATUS] Đã lưu video lên Supabase: ${downloadResult.supabaseUrl}`);
+            
+            // 🎯 CẬP NHẬT SUPABASE URL VÀ TRẠNG THÁI DOWNLOAD
+            await this.prisma.heygenVideo.update({
+              where: { id },
+              data: {
+                supabaseVideoUrl: downloadResult.supabaseUrl,
+                isDownloaded: true,
+                downloadedAt: new Date(),
+                lastError: null, // 🎯 XÓA LỖI CŨ
+              },
+            });
+            
+            console.log(`🎉 [SYNC STATUS] Download và upload hoàn tất!`);
+          } else {
+            console.log(`❌ [SYNC STATUS] Lỗi download: ${downloadResult.error}`);
+            await this.prisma.heygenVideo.update({
+              where: { id },
+              data: {
+                lastError: downloadResult.error,
+              },
+            });
+          }
+        } catch (downloadError) {
+          console.error('⚠️ [SYNC STATUS] Không thể download video:', downloadError);
+          await this.prisma.heygenVideo.update({
+            where: { id },
+            data: {
+              lastError: downloadError.error,
+            },
+          });
+        }
+      } else {
+        console.log(`❌ [SYNC STATUS] Không có downloadable URL từ HeyGen`);
+        await this.prisma.heygenVideo.update({
+          where: { id },
+          data: {
+            lastError: 'No downloadable URL from HeyGen',
+          },
+        });
+      }
+
+    } else if (heygenStatus.status === 'failed') {
+      console.log(`💥 [SYNC STATUS] Video failed: ${heygenStatus.error_message}`);
+      updateData = {
+        ...updateData,
+        status: HeygenVideoStatus.FAILED,
+        errorMessage: heygenStatus.error_message || 'Video generation failed',
+        lastError: heygenStatus.error_message || 'Video generation failed',
+      };
+
+      // 🎯 CẬP NHẬT DATABASE CHO TRƯỜNG HỢP FAILED
+      await this.prisma.heygenVideo.update({
+        where: { id },
+        data: updateData,
+      });
+    } else {
+      // 🎯 CẬP NHẬT CHO CÁC TRẠNG THÁI KHÁC (pending, processing, etc.)
+      await this.prisma.heygenVideo.update({
+        where: { id },
+        data: updateData,
+      });
+    }
+
+    // 🎯 LẤY LẠI VIDEO ĐÃ CẬP NHẬT ĐỂ TRẢ VỀ
+    const updatedVideo = await this.prisma.heygenVideo.findUnique({
+      where: { id },
+    });
+
+    // 🎯 KIỂM TRA updatedVideo CÓ TỒN TẠI KHÔNG
+    if (!updatedVideo) {
+      throw new NotFoundException('Video không tồn tại sau khi cập nhật');
+    }
+
+    console.log(`✅ [SYNC STATUS] Sync hoàn thành!`);
+    return {
+      success: true,
+      message: 'Đồng bộ trạng thái thành công',
+      data: new VideoResponseDto(updatedVideo),
+    };
+  } catch (error) {
+    console.error(`❌ [SYNC STATUS] Lỗi đồng bộ trạng thái:`, error);
+    
+    // 🎯 CẬP NHẬT LỖI VÀO DATABASE
+    try {
+      await this.prisma.heygenVideo.update({
+        where: { id },
+        data: {
+          lastError: error.message,
+          retryCount: { increment: 1 }
+        }
+      });
+    } catch (dbError) {
+      console.error(`❌ Không thể cập nhật lỗi:`, dbError.message);
+    }
+    
+    throw new InternalServerErrorException(`Lỗi đồng bộ trạng thái: ${error.message}`);
+  }
+}
+
+private isValidDownloadableUrl(url: string): boolean {
+  if (!url) {
+    console.log(`❌ [isValidDownloadableUrl] URL rỗng`);
+    return false;
+  }
+  
+  // 🎯 KIỂM TRA URL CÓ PHẢI LÀ DOWNLOADABLE URL THẬT
+  const isValid = url.includes('.mp4') && 
+                 url.includes('heygen.ai') && // 🎯 Domain thật từ HeyGen
+                 url.includes('Expires=') &&   // 🎯 Có expiration
+                 url.includes('Signature=');   // 🎯 Có signature
+  
+  console.log(`🔍 [isValidDownloadableUrl] "${url.substring(0, 100)}..." -> ${isValid}`);
+  return isValid;
+}
+  // THÊM METHOD: Manual download video (cho trường hợp muốn download lại)
+  async manualDownloadVideo(id: number) {
+    const video = await this.prisma.heygenVideo.findUnique({
+      where: { id },
+    });
+
+    if (!video) throw new NotFoundException('Video không tồn tại');
+
+    if (video.status !== HeygenVideoStatus.COMPLETED) {
+      throw new BadRequestException('Chỉ có thể download video đã hoàn thành');
+    }
+
+    if (video.isDownloaded && video.supabaseVideoUrl) {
+      return {
+        success: true,
+        message: 'Video đã được download trước đó',
+        data: {
+          supabaseUrl: video.supabaseVideoUrl,
+        },
+      };
+    }
+
+    const result = await this.downloadAndSaveVideoToSupabase(video.videoId);
+
+    if (result.success) {
+      return {
+        success: true,
+        message: 'Download video thành công',
+        data: {
+          supabaseUrl: result.supabaseUrl,
+        },
+      };
+    } else {
+      throw new InternalServerErrorException(`Lỗi download video: ${result.error}`);
+    }
+  }
+
+  // THÊM METHOD: Lấy video đã download từ Supabase
+  async getDownloadedVideos(query: VideoQueryDto) {
+    const { page = 1, limit = 10, search, status, userId, lessonId, avatarId, voiceId } = query;
+    const skip = (page - 1) * limit;
+
+    const where: Prisma.HeygenVideoWhereInput = {
+      AND: [
+        { isDownloaded: true }, // CHỈ LẤY VIDEO ĐÃ DOWNLOAD
+        search
+          ? {
+              OR: [
+                { title: { contains: search, mode: 'insensitive' as Prisma.QueryMode } },
+                { inputText: { contains: search, mode: 'insensitive' as Prisma.QueryMode } },
+                { videoId: { contains: search, mode: 'insensitive' as Prisma.QueryMode } },
+              ],
+            }
+          : {},
+        status ? { status } : {},
+        userId ? { userId } : {},
+        lessonId ? { lessonId } : {},
+        avatarId ? { avatarId } : {},
+        voiceId ? { voiceId } : {},
+      ],
+    };
+
+    const [videos, total] = await this.prisma.$transaction([
+      this.prisma.heygenVideo.findMany({
+        where,
+        skip,
+        take: Number(limit),
+        include: {
+          avatar: {
+            select: {
+              id: true,
+              avatarId: true,
+              name: true,
+              displayName: true,
+              gender: true,
+              preview_image: true,
+              preview_video: true,
+              avatar_style: true,
+            }
+          },
+          voice: {
+            select: {
+              id: true,
+              voiceId: true,
+              name: true,
+              displayName: true,
+              gender: true,
+              language: true,
+              language_code: true,
+              preview_audio: true,
+            }
+          },
+          user: {
+            select: {
+              id: true,
+              name: true,
+              email: true,
+            },
+          },
+          lesson: {
+            select: {
+              id: true,
+              title: true,
+            },
+          },
+        },
+        orderBy: { downloadedAt: 'desc' }, // SẮP XẾP THEO THỜI GIAN DOWNLOAD
+      }),
+      this.prisma.heygenVideo.count({ where }),
+    ]);
+
+    return {
+      success: true,
+      message: 'Lấy danh sách video đã download thành công',
+      data: {
+        data: videos.map((video) => new VideoResponseDto(video)),
+        total,
+        page,
+        pageCount: Math.ceil(total / limit),
+      },
+    };
+  }
+
+  // THÊM METHOD: Đồng bộ và download tất cả video completed chưa download
+  async syncAndDownloadAllCompleted() {
+    const completedVideos = await this.prisma.heygenVideo.findMany({
+      where: {
+        status: HeygenVideoStatus.COMPLETED,
+        isDownloaded: false,
+        videoUrl: { not: null },
+      },
+      take: 20, // Giới hạn số lượng để tránh quá tải
+    });
+
+    const results: Array<{
+      videoId: string;
+      success: boolean;
+      supabaseUrl?: string;
+      error?: string;
+    }> = [];
+
+    for (const video of completedVideos) {
+      try {
+        const result = await this.downloadAndSaveVideoToSupabase(video.videoId);
+        results.push({
+          videoId: video.videoId,
+          success: result.success,
+          supabaseUrl: result.supabaseUrl,
+          error: result.error,
+        });
+      } catch (error) {
+        results.push({
+          videoId: video.videoId,
+          success: false,
+          error: error.message,
+        });
+      }
+    }
+
+    const successCount = results.filter(r => r.success).length;
+    const failedCount = results.filter(r => !r.success).length;
+
+    return {
+      success: true,
+      message: `Đã xử lý ${results.length} video: ${successCount} thành công, ${failedCount} thất bại`,
+      data: results,
+    };
+  }
 }

@@ -1,10 +1,6 @@
+import { CourseLevel } from '@prisma/client';
 import { IsString, IsOptional, IsNumber, IsBoolean, IsArray, IsEnum } from 'class-validator';
 
-export enum CourseLevel {
-  BEGINNER = 'BEGINNER',
-  INTERMEDIATE = 'INTERMEDIATE',
-  ADVANCED = 'ADVANCED'
-}
 
 export class CreateCourseDto {
   @IsString()
@@ -17,9 +13,6 @@ export class CreateCourseDto {
   @IsString()
   description?: string;
 
-  @IsOptional()
-  @IsString()
-  thumbnail?: string;
 
   @IsOptional()
   @IsEnum(CourseLevel)
@@ -35,6 +28,10 @@ export class CreateCourseDto {
 
   @IsNumber()
   instructorId: number;
+
+  @IsOptional()
+  @IsString()
+  thumbnail?: string;
 
   @IsOptional()
   @IsArray()

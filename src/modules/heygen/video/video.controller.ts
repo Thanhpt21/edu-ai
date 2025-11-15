@@ -18,10 +18,11 @@ import { JwtAuthGuard } from 'src/common/guards/jwt-auth.guard';
 import { CurrentUser } from 'src/common/decorators/current-user.decorator';
 import { VideosService } from './video.service';
 import { HeyGenApiService } from '../shared/heygen-api.service';
+import { PrismaService } from 'prisma/prisma.service';
 
 @Controller('heygen/videos')
 export class VideosController {
-  constructor(private readonly videosService: VideosService, private heygenApiService: HeyGenApiService) {}
+  constructor(private readonly videosService: VideosService, private heygenApiService: HeyGenApiService, private prisma: PrismaService) {}
 
   // Tạo video mới
   @Post()
@@ -73,6 +74,76 @@ export class VideosController {
   async getVideoByHeyGenId(@Param('videoId') videoId: string) {
     return this.videosService.getVideoByHeyGenId(videoId);
   }
+
+@Get('test-download/:id')
+async testDownload(@Param('id', ParseIntPipe) id: number) {
+  const video = await this.prisma.heygenVideo.findUnique({ 
+    where: { id } 
+  });
+  
+  if (!video) {
+    return { success: false, error: 'Video not found' };
+  }
+
+  // KIỂM TRA VIDEO URL CÓ TỒN TẠI KHÔNG
+  if (!video.videoUrl) {
+    return { 
+      success: false, 
+      error: 'Video URL not available',
+      videoData: {
+        id: video.id,
+        videoId: video.videoId,
+        status: video.status,
+        hasVideoUrl: false
+      }
+    };
+  }
+
+  try {
+    // Test download trực tiếp
+    const testUrl = video.videoUrl;
+    console.log(`🧪 Testing download from: ${testUrl}`);
+    
+    const response = await fetch(testUrl, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+      }
+    });
+    
+    const buffer = await response.arrayBuffer();
+    const sizeMB = (buffer.byteLength / 1024 / 1024).toFixed(2);
+    
+    return {
+      success: true,
+      data: {
+        url: testUrl, 
+        size: `${sizeMB} MB`,
+        contentLength: response.headers.get('content-length'),
+        contentType: response.headers.get('content-type'),
+        status: response.status,
+        ok: response.ok
+      },
+      videoData: {
+        id: video.id,
+        videoId: video.videoId,
+        status: video.status,
+        hasVideoUrl: true
+      }
+    };
+  } catch (error) {
+    return {
+      success: false,
+      error: error.message,
+      url: video.videoUrl,
+      videoData: {
+        id: video.id,
+        videoId: video.videoId,
+        status: video.status,
+        hasVideoUrl: true
+      }
+    };
+  }
+}
 
   // Đồng bộ status video
   @Put(':id/sync-status')

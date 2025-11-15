@@ -29,6 +29,11 @@ export class VideoResponseDto {
   duration?: number;
   errorMessage?: string;
   
+  // 🎯 THÊM 3 FIELD MỚI
+  supabaseVideoUrl?: string;
+  isDownloaded: boolean;
+  downloadedAt?: Date;
+  
   // Metadata
   metadata?: any;
   
@@ -61,6 +66,12 @@ export class VideoResponseDto {
     this.thumbnailUrl = video.thumbnailUrl ?? undefined;
     this.duration = video.duration ?? undefined;
     this.errorMessage = video.errorMessage ?? undefined;
+    
+    // 🎯 THÊM 3 FIELD MỚI
+    this.supabaseVideoUrl = video.supabaseVideoUrl ?? undefined;
+    this.isDownloaded = video.isDownloaded;
+    this.downloadedAt = video.downloadedAt ?? undefined;
+    
     this.metadata = video.metadata ? JSON.parse(JSON.stringify(video.metadata)) : undefined;
     this.createdAt = video.createdAt;
     this.updatedAt = video.updatedAt;

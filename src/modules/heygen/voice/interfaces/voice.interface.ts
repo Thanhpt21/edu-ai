@@ -8,6 +8,9 @@ export interface IVoice {
   language_code?: string;
   preview_audio?: string;
   is_customized: boolean;
+  is_premium: boolean;
+  is_free: boolean;
+  tier?: string;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -21,6 +24,9 @@ export interface IVoiceCreate {
   language_code?: string;
   preview_audio?: string;
   is_customized?: boolean;
+   is_premium?: boolean;
+  is_free?: boolean;
+  tier?: string;
 }
 
 export interface IVoiceUpdate {
@@ -32,4 +38,7 @@ export interface IVoiceUpdate {
   language_code?: string;
   preview_audio?: string;
   is_customized?: boolean;
+  is_premium?: boolean;
+  is_free?: boolean;
+  tier?: string;
 }

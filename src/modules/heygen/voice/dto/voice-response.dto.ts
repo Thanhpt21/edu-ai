@@ -10,6 +10,9 @@ export class VoiceResponseDto {
   language_code?: string;
   preview_audio?: string;
   is_customized: boolean;
+  is_premium: boolean;
+  is_free: boolean;
+  tier?: string;
   createdAt: Date;
   updatedAt: Date;
 
@@ -23,6 +26,9 @@ export class VoiceResponseDto {
     this.language_code = voice.language_code ?? undefined;
     this.preview_audio = voice.preview_audio ?? undefined;
     this.is_customized = voice.is_customized;
+    this.is_premium = voice.is_premium;
+    this.is_free = voice.is_free;
+    this.tier = voice.tier ?? undefined;
     this.createdAt = voice.createdAt;
     this.updatedAt = voice.updatedAt;
   }

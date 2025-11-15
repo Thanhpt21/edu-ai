@@ -32,4 +32,16 @@ export class UpdateVoiceDto {
   @IsOptional()
   @IsBoolean()
   is_customized?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  is_premium?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  is_free?: boolean;
+
+  @IsOptional()
+  @IsString()
+  tier?: string;
 }

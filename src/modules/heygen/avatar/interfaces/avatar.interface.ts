@@ -9,6 +9,8 @@ export interface IAvatar {
   avatar_style: string;
   is_customized: boolean;
   is_instant: boolean;
+   is_premium: boolean;
+  is_free: boolean;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -23,6 +25,8 @@ export interface IAvatarCreate {
   avatar_style?: string;
   is_customized?: boolean;
   is_instant?: boolean;
+   is_premium: boolean;
+  is_free: boolean;
 }
 
 export interface IAvatarUpdate {
@@ -35,4 +39,6 @@ export interface IAvatarUpdate {
   avatar_style?: string;
   is_customized?: boolean;
   is_instant?: boolean;
+   is_premium: boolean;
+  is_free: boolean;
 }

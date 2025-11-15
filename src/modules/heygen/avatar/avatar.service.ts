@@ -21,35 +21,28 @@ export class AvatarsService {
     try {
       this.logger.log('Bắt đầu sync avatars từ HeyGen API...');
       
-      // Gọi HeyGen API để lấy danh sách avatars
       const response = await this.heygenApiService.getAvatars();
       
       this.logger.log('Nhận được data từ HeyGen:', JSON.stringify(response, null, 2));
 
-      // SỬA LỖI: Sử dụng type assertion để tránh lỗi TypeScript
       const responseData = response as any;
       
-      // ĐIỀU CHỈNH: Xử lý các cấu trúc response khác nhau
       let avatarsData = responseData.data?.avatars || responseData.data || responseData;
 
-      // Nếu response là object có property data là array
       if (responseData.data && Array.isArray(responseData.data)) {
         avatarsData = responseData.data;
       }
 
-      // Nếu response trực tiếp là array
       if (Array.isArray(responseData)) {
         avatarsData = responseData;
       }
 
       if (!Array.isArray(avatarsData)) {
         this.logger.warn('Cấu trúc response không phải array:', typeof avatarsData);
-        // Thử truy cập các property khác
         if (avatarsData && typeof avatarsData === 'object') {
           const keys = Object.keys(avatarsData);
           this.logger.log('Các keys trong response:', keys);
           
-          // Thử tìm array trong các keys
           for (const key of keys) {
             if (Array.isArray(avatarsData[key])) {
               avatarsData = avatarsData[key];
@@ -69,53 +62,53 @@ export class AvatarsService {
       let updatedCount = 0;
       let skippedCount = 0;
 
-      // Xử lý từng avatar
       for (const avatarData of avatarsData) {
         try {
-          // DEBUG: Log avatar data structure
           this.logger.debug(`Processing avatar: ${JSON.stringify(avatarData)}`);
 
-          // Map fields từ HeyGen response sang database schema
-          // THỬ CÁC FIELD NAME KHÁC NHAU
+          // XÁC ĐỊNH GIÁ TRỊ PREMIUM TỪ API RESPONSE
+          const isPremium = avatarData.premium !== undefined ? avatarData.premium : 
+                          avatarData.is_premium !== undefined ? avatarData.is_premium : 
+                          avatarData.tier === 'premium' ? true : false;
+
           const avatarPayload = {
             avatarId: avatarData.avatar_id || avatarData.id || avatarData.avatarId,
-            name: avatarData.name || avatarData.display_name || avatarData.displayName || `Avatar_${avatarData.avatar_id || avatarData.id}`,
-            displayName: avatarData.display_name || avatarData.displayName || avatarData.name || `Avatar ${avatarData.avatar_id || avatarData.id}`,
+            name: avatarData.avatar_name || avatarData.name || avatarData.display_name || avatarData.displayName || `Avatar_${avatarData.avatar_id || avatarData.id}`,
+            displayName: avatarData.avatar_name || avatarData.display_name || avatarData.displayName || avatarData.name || `Avatar ${avatarData.avatar_id || avatarData.id}`,
             gender: ((avatarData.gender || 'unknown') as string).toLowerCase(),
-            preview_image: avatarData.preview_image || avatarData.avatar_url || avatarData.thumbnail_url || avatarData.image_url || avatarData.preview_image_url || '',
-            preview_video: avatarData.preview_video || avatarData.video_url || avatarData.preview_video_url || '',
+            preview_image: avatarData.preview_image_url || avatarData.preview_image || avatarData.avatar_url || avatarData.thumbnail_url || avatarData.image_url || '',
+            preview_video: avatarData.preview_video_url || avatarData.preview_video || avatarData.video_url || '',
             avatar_style: avatarData.style || avatarData.avatar_style || 'normal',
             is_customized: avatarData.is_customized || false,
             is_instant: avatarData.is_instant !== undefined ? avatarData.is_instant : true,
+            // THÊM 2 FIELD MỚI VÀO PAYLOAD
+            is_premium: isPremium,
+            is_free: !isPremium, // Ngược lại với premium
           };
 
-          // Validate required fields
           if (!avatarPayload.avatarId) {
             this.logger.warn('Skipped avatar missing avatarId:', avatarData);
             skippedCount++;
             continue;
           }
 
-          // Check if avatar already exists
           const existingAvatar = await this.prisma.heygenAvatar.findUnique({
             where: { avatarId: avatarPayload.avatarId }
           });
 
           if (existingAvatar) {
-            // Update existing avatar
             await this.prisma.heygenAvatar.update({
               where: { avatarId: avatarPayload.avatarId },
               data: avatarPayload
             });
             updatedCount++;
-            this.logger.log(`Updated avatar: ${avatarPayload.avatarId}`);
+            this.logger.log(`Updated avatar: ${avatarPayload.avatarId} (Premium: ${isPremium}, Free: ${!isPremium})`);
           } else {
-            // Create new avatar
             await this.prisma.heygenAvatar.create({
               data: avatarPayload
             });
             createdCount++;
-            this.logger.log(`Created avatar: ${avatarPayload.avatarId}`);
+            this.logger.log(`Created avatar: ${avatarPayload.avatarId} (Premium: ${isPremium}, Free: ${!isPremium})`);
           }
         } catch (avatarError) {
           this.logger.error(`Lỗi xử lý avatar:`, avatarError);
@@ -123,13 +116,24 @@ export class AvatarsService {
         }
       }
 
+      // THỐNG KÊ PREMIUM/FREE
+      const premiumCount = await this.prisma.heygenAvatar.count({
+        where: { is_premium: true }
+      });
+      
+      const freeCount = await this.prisma.heygenAvatar.count({
+        where: { is_free: true }
+      });
+
       return {
         success: true,
-        message: `Sync avatars thành công! Created: ${createdCount}, Updated: ${updatedCount}`,
+        message: `Sync avatars thành công! Created: ${createdCount}, Updated: ${updatedCount}, Premium: ${premiumCount}, Free: ${freeCount}`,
         data: {
           created: createdCount,
           updated: updatedCount,
           skipped: skippedCount,
+          premium: premiumCount,
+          free: freeCount,
           total: avatarsData.length
         }
       };
@@ -187,6 +191,8 @@ export class AvatarsService {
         avatar_style: dto.avatar_style || 'normal',
         is_customized: dto.is_customized || false,
         is_instant: dto.is_instant || false,
+        is_premium: dto.is_premium,
+        is_free: dto.is_free,
       }
     });
     
@@ -197,6 +203,101 @@ export class AvatarsService {
     };
   }
 
+  // Lấy danh sách avatar miễn phí
+async getFreeAvatars(page = 1, limit = 10, search = '') {
+  const skip = (page - 1) * limit;
+
+  const where: Prisma.HeygenAvatarWhereInput = {
+    is_free: true,
+    ...(search && {
+      OR: [
+        { name: { contains: search, mode: 'insensitive' as Prisma.QueryMode } },
+        { displayName: { contains: search, mode: 'insensitive' as Prisma.QueryMode } },
+      ],
+    }),
+  };
+
+  const [avatars, total] = await this.prisma.$transaction([
+    this.prisma.heygenAvatar.findMany({
+      where,
+      skip,
+      take: limit,
+      orderBy: { createdAt: 'desc' },
+    }),
+    this.prisma.heygenAvatar.count({ where }),
+  ]);
+
+  return {
+    success: true,
+    message: 'Lấy danh sách avatar miễn phí thành công',
+    data: {
+      data: avatars.map((avatar) => new AvatarResponseDto(avatar)),
+      total,
+      page,
+      pageCount: Math.ceil(total / limit),
+    },
+  };
+}
+
+// Lấy danh sách avatar premium
+async getPremiumAvatars(page = 1, limit = 10, search = '') {
+  const skip = (page - 1) * limit;
+
+  const where: Prisma.HeygenAvatarWhereInput = {
+    is_premium: true,
+    ...(search && {
+      OR: [
+        { name: { contains: search, mode: 'insensitive' as Prisma.QueryMode } },
+        { displayName: { contains: search, mode: 'insensitive' as Prisma.QueryMode } },
+      ],
+    }),
+  };
+
+  const [avatars, total] = await this.prisma.$transaction([
+    this.prisma.heygenAvatar.findMany({
+      where,
+      skip,
+      take: limit,
+      orderBy: { createdAt: 'desc' },
+    }),
+    this.prisma.heygenAvatar.count({ where }),
+  ]);
+
+  return {
+    success: true,
+    message: 'Lấy danh sách avatar premium thành công',
+    data: {
+      data: avatars.map((avatar) => new AvatarResponseDto(avatar)),
+      total,
+      page,
+      pageCount: Math.ceil(total / limit),
+    },
+  };
+}
+
+// Lấy tất cả avatar miễn phí (không phân trang)
+async getAllFreeAvatars(search = '') {
+  const where: Prisma.HeygenAvatarWhereInput = {
+    is_free: true,
+    ...(search && {
+      OR: [
+        { name: { contains: search, mode: 'insensitive' as Prisma.QueryMode } },
+        { displayName: { contains: search, mode: 'insensitive' as Prisma.QueryMode } },
+      ],
+    }),
+  };
+
+  const avatars = await this.prisma.heygenAvatar.findMany({
+    where,
+    orderBy: { name: 'asc' },
+  });
+
+  return {
+    success: true,
+    message: 'Lấy tất cả avatar miễn phí thành công',
+    data: avatars.map((avatar) => new AvatarResponseDto(avatar)),
+  };
+}
   // Lấy danh sách avatar (có phân trang + search)
   async getAvatars(page = 1, limit = 10, search = '') {
     const skip = (page - 1) * limit;

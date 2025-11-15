@@ -29,6 +29,8 @@ import { CoursesModule } from './modules/courses/courses.module';
 import { CoursePrerequisitesModule } from './modules/course-prerequisites/course-prerequisites.module';
 import { LessonsModule } from './modules/lessons/lessons.module';
 import { EnrollmentsModule } from './modules/enrollment/enrollments.module';
+import { UserRoleModule } from './modules/user-role/user-role.module';
+import { AvatarIVVideoModule } from './modules/heygen/avatarIV/avatar-iv-video.module';
 
 @Module({
   imports: [
@@ -55,6 +57,7 @@ import { EnrollmentsModule } from './modules/enrollment/enrollments.module';
     AvatarsModule,
     VoicesModule,
     VideosModule,
+    AvatarIVVideoModule,
     AssetsModule,
     TemplatesModule,
     CategoriesModule,
@@ -62,7 +65,8 @@ import { EnrollmentsModule } from './modules/enrollment/enrollments.module';
     CoursesModule,
     CoursePrerequisitesModule,
     LessonsModule,
-    EnrollmentsModule
+    EnrollmentsModule,
+    UserRoleModule
   ],
   controllers: [AppController],
   providers: [AppService],
