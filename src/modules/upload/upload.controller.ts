@@ -36,6 +36,8 @@ export class UploadController {
     };
   }
 
+  
+
   @Delete('image')
   async deleteImage(@Body() body: { url: string }) {
     const { url } = body;

@@ -18,6 +18,12 @@ async function bootstrap() {
 
   app.use(cookieParser());
 
+  app.use((req: any, res: any, next: any) => {
+    req.setTimeout(10 * 60 * 1000); // 10 phút timeout
+    res.setTimeout(10 * 60 * 1000);
+    next();
+  });
+
   app.enableCors({
     origin: true,
     methods: 'GET,POST,PUT,DELETE,OPTIONS,PATCH',

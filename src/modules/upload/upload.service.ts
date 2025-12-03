@@ -7,6 +7,37 @@ import { BadRequestException } from '@nestjs/common';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as crypto from 'crypto';
+import { getVideoDurationInSeconds } from 'get-video-duration';
+
+
+// Thêm interface và type definitions
+interface UploadFileResult {
+  success: boolean;
+  url?: string;
+  error?: string;
+  filePath?: string;
+  size?: number;
+  mimeType?: string;
+}
+
+interface FileUploadOptions {
+  folderPath?: string;
+  fileName?: string;
+  bucketName?: string;
+  contentType?: string;
+  isBase64?: boolean;
+}
+
+interface VideoUploadResult {
+  success: boolean;
+  url?: string;
+  error?: string;
+  duration?: number;
+  size?: number;
+}
+
+
+
 
 @Injectable()
 export class UploadService {
@@ -34,6 +65,10 @@ export class UploadService {
     return this.configService.get<string>('SUPABASE_VIDEO_BUCKET_NAME', 'videos');
   }
 
+  private get fileBucketName(): string {
+    return this.configService.get<string>('SUPABASE_FILE_BUCKET_NAME', 'files');
+  }
+
    /**
    * Đảm bảo thư mục temp tồn tại
    */
@@ -44,222 +79,717 @@ export class UploadService {
     }
   }
 
+  /**
+   * Sanitize filename
+   */
+  private sanitizeFileName(fileName: string): string {
+    return fileName.replace(/[^a-zA-Z0-9-_.]/g, '_');
+  }
+
+    /**
+   * Format duration từ seconds sang HH:MM:SS
+   */
+  private formatDuration(seconds: number): string {
+    const hours = Math.floor(seconds / 3600);
+    const minutes = Math.floor((seconds % 3600) / 60);
+    const secs = Math.floor(seconds % 60);
+    
+    if (hours > 0) {
+      return `${hours}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+    } else if (minutes > 0) {
+      return `${minutes}:${secs.toString().padStart(2, '0')}`;
+    } else {
+      return `0:${secs.toString().padStart(2, '0')}`;
+    }
+  }
+
+  /**
+   * Tính checksum MD5 của file
+   */
+  private calculateChecksum(filePath: string): string {
+    const fileBuffer = fs.readFileSync(filePath);
+    return require('crypto').createHash('md5').update(fileBuffer).digest('hex');
+  }
+
+    /**
+   * Kiểm tra file có tồn tại trên Supabase không
+   */
+  private async checkFileExists(bucketName: string, filePath: string): Promise<string | null> {
+    try {
+      const { data } = this.supabase.storage
+        .from(bucketName)
+        .getPublicUrl(filePath);
+      
+      // Kiểm tra xem URL có thể truy cập được không
+      const response = await fetch(data.publicUrl, { method: 'HEAD' });
+      if (response.ok) {
+        return data.publicUrl;
+      }
+      return null;
+    } catch (error) {
+      return null;
+    }
+  }
+
+  /**
+   * Upload file lên Supabase (tổng quát)
+   */
+  async uploadFile(
+    file: Express.Multer.File | Buffer | string,
+    options: FileUploadOptions = {}
+  ): Promise<UploadFileResult> {
+    try {
+      const {
+        folderPath = 'documents',
+        fileName,
+        bucketName = this.fileBucketName, // Sử dụng file bucket làm mặc định
+        contentType,
+        isBase64 = false
+      } = options;
+
+      console.log(`📤 [uploadFile] Bắt đầu upload:`, {
+        folderPath,
+        fileName,
+        bucketName,
+        contentType,
+        isBase64
+      });
+
+      // 1. XỬ LÝ FILE INPUT
+      let fileBuffer: Buffer;
+      let finalFileName: string;
+      let finalContentType: string;
+
+      if (typeof file === 'string') {
+        // Base64 string hoặc URL
+        if (isBase64) {
+          const base64Data = file.replace(/^data:([A-Za-z-+/]+);base64,/, '');
+          fileBuffer = Buffer.from(base64Data, 'base64');
+        } else {
+          const response = await fetch(file);
+          if (!response.ok) {
+            throw new Error(`Download failed: HTTP ${response.status}`);
+          }
+          const arrayBuffer = await response.arrayBuffer();
+          fileBuffer = Buffer.from(arrayBuffer);
+        }
+        finalFileName = fileName || `${uuidv4()}_downloaded_file`;
+        finalContentType = contentType || 'application/octet-stream';
+      } else if (Buffer.isBuffer(file)) {
+        // Buffer
+        fileBuffer = file;
+        finalFileName = fileName || `${uuidv4()}_buffer_file`;
+        finalContentType = contentType || 'application/octet-stream';
+      } else {
+        // Express.Multer.File
+        const multerFile = file as Express.Multer.File;
+        fileBuffer = multerFile.buffer;
+        finalFileName = fileName || `${uuidv4()}-${this.sanitizeFileName(multerFile.originalname)}`;
+        finalContentType = contentType || multerFile.mimetype;
+      }
+
+      // 2. VALIDATE FILE
+      console.log(`🔍 [uploadFile] Validating file...`);
+      const fileSize = fileBuffer.length;
+      const fileSizeMB = (fileSize / 1024 / 1024).toFixed(2);
+
+      console.log(`📊 [uploadFile] File info:`, {
+        size: `${fileSizeMB} MB (${fileSize} bytes)`,
+        contentType: finalContentType,
+        fileName: finalFileName
+      });
+
+      // Kiểm tra kích thước file
+      if (fileSize < this.minFileSize) {
+        throw new Error(`File quá nhỏ (${fileSize} bytes < ${this.minFileSize} bytes)`);
+      }
+
+      if (fileSize > this.maxFileSize) {
+        throw new Error(`File quá lớn (${fileSizeMB} MB > ${this.maxFileSize / 1024 / 1024} MB)`);
+      }
+
+      // 3. TẠO FILE PATH
+      const filePath = `${folderPath}/${finalFileName}`;
+      
+      // 4. KIỂM TRA FILE ĐÃ TỒN TẠI
+      console.log(`🔍 [uploadFile] Checking if file exists...`);
+      const existingUrl = await this.checkFileExists(bucketName, filePath);
+      if (existingUrl) {
+        console.log(`✅ [uploadFile] File đã tồn tại: ${existingUrl}`);
+        return {
+          success: true,
+          url: existingUrl,
+          filePath,
+          size: fileSize,
+          mimeType: finalContentType
+        };
+      }
+
+      // 5. UPLOAD LÊN SUPABASE
+      console.log(`📤 [uploadFile] Uploading to Supabase...`);
+      
+      const { data, error } = await this.supabase.storage
+        .from(bucketName)
+        .upload(filePath, fileBuffer, {
+          contentType: finalContentType,
+          upsert: false,
+          cacheControl: '3600'
+        });
+
+      if (error) {
+        if (error.message?.includes('already exists')) {
+          console.log(`ℹ️ [uploadFile] File đã tồn tại, lấy URL hiện có`);
+          const { data: existingUrlData } = this.supabase.storage
+            .from(bucketName)
+            .getPublicUrl(filePath);
+          
+          return {
+            success: true,
+            url: existingUrlData.publicUrl,
+            filePath,
+            size: fileSize,
+            mimeType: finalContentType
+          };
+        }
+        throw new Error(`Supabase upload error: ${error.message}`);
+      }
+
+      console.log(`✅ [uploadFile] Upload thành công!`);
+
+      // 6. LẤY PUBLIC URL
+      console.log(`🔗 [uploadFile] Getting public URL...`);
+      const { data: publicUrlData } = this.supabase.storage
+        .from(bucketName)
+        .getPublicUrl(filePath);
+
+      if (!publicUrlData?.publicUrl) {
+        throw new Error('Could not get public URL from Supabase');
+      }
+
+      console.log(`✅ [uploadFile] Public URL: ${publicUrlData.publicUrl}`);
+
+      // 7. VERIFY FILE
+      console.log(`🔍 [uploadFile] Verifying uploaded file...`);
+      const verifyResult = await this.verifyFileAccessible(publicUrlData.publicUrl);
+      
+      if (!verifyResult.accessible) {
+        throw new Error(`File không thể truy cập: ${verifyResult.error}`);
+      }
+
+      console.log(`🎉 [uploadFile] File upload hoàn tất!`);
+
+      return {
+        success: true,
+        url: publicUrlData.publicUrl,
+        filePath,
+        size: fileSize,
+        mimeType: finalContentType
+      };
+
+    } catch (error) {
+      console.error(`❌ [uploadFile] Lỗi:`, error.message);
+      return {
+        success: false,
+        error: error.message
+      };
+    }
+  }
+
+  /**
+   * Upload document file cho assignment
+   */
+  async uploadAssignmentFile(
+    file: Express.Multer.File,
+    courseId?: number,
+    assignmentId?: number
+  ): Promise<UploadFileResult> {
+    console.log(`📄 [uploadAssignmentFile] Uploading assignment file...`);
+
+    // Validate document type
+    const allowedMimeTypes = [
+      'application/pdf',
+      'application/msword',
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      'application/vnd.ms-excel',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      'application/vnd.ms-powerpoint',
+      'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+      'text/plain',
+      'image/jpeg',
+      'image/png',
+      'image/gif',
+      'application/zip',
+      'application/x-rar-compressed',
+      'application/x-7z-compressed'
+    ];
+
+    if (!allowedMimeTypes.includes(file.mimetype)) {
+      return {
+        success: false,
+        error: `Loại file không được hỗ trợ: ${file.mimetype}. Chỉ chấp nhận: PDF, Word, Excel, PowerPoint, text, images, zip, rar, 7z`
+      };
+    }
+
+    // Tạo folder path dựa trên course và assignment
+    let folderPath = 'assignments';
+    if (courseId) {
+      folderPath += `/course_${courseId}`;
+      if (assignmentId) {
+        folderPath += `/assignment_${assignmentId}`;
+      }
+    }
+
+    const result = await this.uploadFile(file, {
+      folderPath,
+      bucketName: this.fileBucketName,
+      contentType: file.mimetype
+    });
+
+    return result;
+  }
 
 
+   /**
+   * Xóa file từ Supabase
+   */
+  async deleteFile(
+    fileUrl: string, 
+    bucketName?: string
+  ): Promise<{ success: boolean; error?: string }> {
+    if (!fileUrl) {
+      return { success: false, error: 'File URL is empty' };
+    }
 
+    try {
+      console.log(`🗑️ [deleteFile] Bắt đầu xóa file: ${fileUrl}`);
+
+      // Xác định bucket name
+      const targetBucketName = bucketName || this.detectBucketFromUrl(fileUrl);
+      
+      if (!targetBucketName) {
+        return { 
+          success: false, 
+          error: 'Không thể xác định bucket từ URL' 
+        };
+      }
+
+      // Extract file path từ URL
+      const filePath = this.extractFilePathFromUrl(fileUrl, targetBucketName);
+      
+      if (!filePath) {
+        return { 
+          success: false, 
+          error: 'Không thể extract file path từ URL' 
+        };
+      }
+
+      console.log(`🔍 [deleteFile] File info:`, {
+        bucket: targetBucketName,
+        filePath: filePath
+      });
+
+      // Xóa file từ Supabase
+      const { error } = await this.supabase.storage
+        .from(targetBucketName)
+        .remove([filePath]);
+
+      if (error) {
+        console.error(`❌ [deleteFile] Lỗi xóa file:`, error.message);
+        
+        // Nếu file không tồn tại, coi như thành công
+        if (error.message?.includes('not found') || error.message?.includes('does not exist')) {
+          console.log(`ℹ️ [deleteFile] File không tồn tại, coi như đã xóa`);
+          return { success: true };
+        }
+        
+        return { 
+          success: false, 
+          error: `Supabase delete error: ${error.message}` 
+        };
+      }
+
+      console.log(`✅ [deleteFile] Xóa file thành công: ${filePath}`);
+      return { success: true };
+
+    } catch (error) {
+      console.error(`❌ [deleteFile] Lỗi nghiêm trọng:`, error.message);
+      return { 
+        success: false, 
+        error: error.message 
+      };
+    }
+  }
+
+   /**
+   * Detect bucket từ URL
+   */
+  private detectBucketFromUrl(fileUrl: string): string | null {
+    if (!fileUrl) return null;
+
+    const bucketPatterns = [
+      { bucket: this.videoBucketName, pattern: `/storage/v1/object/public/${this.videoBucketName}/` },
+      { bucket: this.imageBucketName, pattern: `/storage/v1/object/public/${this.imageBucketName}/` },
+      { bucket: this.fileBucketName, pattern: `/storage/v1/object/public/${this.fileBucketName}/` }
+    ];
+
+    for (const { bucket, pattern } of bucketPatterns) {
+      if (fileUrl.includes(pattern)) {
+        return bucket;
+      }
+    }
+
+    // Fallback: dùng file bucket làm mặc định
+    console.log(`ℹ️ [detectBucketFromUrl] Không detect được bucket, dùng mặc định: ${this.fileBucketName}`);
+    return this.fileBucketName;
+  }
+
+    /**
+   * Extract file path từ URL
+   */
+  private extractFilePathFromUrl(fileUrl: string, bucketName: string): string | null {
+    if (!fileUrl || !bucketName) return null;
+
+    const bucketPath = `/storage/v1/object/public/${bucketName}/`;
+    
+    if (!fileUrl.includes(bucketPath)) {
+      console.log(`⚠️ [extractFilePathFromUrl] URL không chứa bucket path: ${bucketPath}`);
+      return null;
+    }
+
+    const parts = fileUrl.split(bucketPath);
+    if (parts.length < 2 || !parts[1]) {
+      console.log(`⚠️ [extractFilePathFromUrl] Không thể parse URL: ${fileUrl}`);
+      return null;
+    }
+    
+    // Lấy path và decode
+    const filePath = decodeURIComponent(parts[1].split('?')[0]);
+    
+    console.log(`🔍 [extractFilePathFromUrl] Extracted path: ${filePath}`);
+    return filePath;
+  }
+
+  /**
+   * Kiểm tra file có tồn tại không
+   */
+  async fileExists(fileUrl: string): Promise<boolean> {
+    try {
+      const bucketName = this.detectBucketFromUrl(fileUrl);
+      
+      if (!bucketName) {
+        return false;
+      }
+
+      const filePath = this.extractFilePathFromUrl(fileUrl, bucketName);
+      
+      if (!filePath) {
+        return false;
+      }
+
+      const { data, error } = await this.supabase.storage
+        .from(bucketName)
+        .list('', {
+          search: filePath,
+        });
+
+      if (error) {
+        console.error('❌ [fileExists] Lỗi kiểm tra file:', error);
+        return false;
+      }
+
+      const exists = data && data.length > 0;
+      console.log(`🔍 [fileExists] File ${filePath}: ${exists ? 'EXISTS' : 'NOT FOUND'}`);
+      
+      return exists;
+    } catch (error) {
+      console.error('❌ [fileExists] Lỗi khi kiểm tra file:', error);
+      return false;
+    }
+  }
+
+  /**
+   * Cleanup old temp files
+   */
+  async cleanupOldTempFiles(maxAgeHours: number = 24): Promise<number> {
+    try {
+      if (!fs.existsSync(this.tempDir)) {
+        return 0;
+      }
+
+      const files = fs.readdirSync(this.tempDir);
+      const now = Date.now();
+      const maxAgeMs = maxAgeHours * 60 * 60 * 1000;
+      let deletedCount = 0;
+
+      for (const file of files) {
+        const filePath = path.join(this.tempDir, file);
+        const stats = fs.statSync(filePath);
+        const ageMs = now - stats.mtimeMs;
+
+        if (ageMs > maxAgeMs) {
+          fs.unlinkSync(filePath);
+          deletedCount++;
+        }
+      }
+
+      if (deletedCount > 0) {
+        this.logger.log(`🧹 Đã xóa ${deletedCount} temp files cũ`);
+      }
+
+      return deletedCount;
+    } catch (error) {
+      this.logger.error(`❌ Lỗi cleanup temp files:`, error);
+      return 0;
+    }
+  }
+
+
+    /**
+   * Verify file có thể truy cập
+   */
+    private async verifyFileAccessible(fileUrl: string): Promise<{ accessible: boolean; error?: string }> {
+    try {
+      const response = await fetch(fileUrl, { method: 'HEAD' });
+      
+      if (response.ok) {
+        const contentType = response.headers.get('content-type');
+        const contentLength = response.headers.get('content-length');
+        
+        console.log(`🔍 [verifyFileAccessible] File info:`, {
+          contentType,
+          contentLength: contentLength ? `${(parseInt(contentLength) / 1024 / 1024).toFixed(2)} MB` : 'unknown'
+        });
+        
+        return { accessible: true };
+      } else {
+        return { 
+          accessible: false, 
+          error: `HTTP ${response.status}: ${response.statusText}` 
+        };
+      }
+    } catch (error) {
+      return { 
+        accessible: false, 
+        error: error.message 
+      };
+    }
+  }
+
+
+    // =========== FILE UPLOAD METHODS (CHO ASSIGNMENT) ===========
 
     /**
    * Upload video từ URL Heygen lên Supabase - PHIÊN BẢN ĐÃ SỬA
    */
-async uploadVideoFromUrl(
-  videoUrl: string, 
-  fileName: string, 
-  folderPath: string = 'heygen-videos'
-): Promise<{ success: boolean; url?: string; error?: string }> {
-  console.log(`🚀 [uploadVideoFromUrl] BẮT ĐẦU`);
-  console.log(`📥 Thông tin upload:`, {
-    videoUrl: videoUrl,
-    urlLength: videoUrl.length,
-    fileName: fileName,
-    folderPath: folderPath
-  });
-  
-  const maxRetries = 3;
-  const tempDir = './temp';
-  let tempFilePath: string | null = null;
+  async uploadVideoFromUrl(
+    videoUrl: string, 
+    fileName: string, 
+    folderPath: string = 'heygen-videos'
+  ): Promise<{ success: boolean; url?: string; error?: string }> {
+    console.log(`🚀 [uploadVideoFromUrl] BẮT ĐẦU`);
+    console.log(`📥 Thông tin upload:`, {
+      videoUrl: videoUrl,
+      urlLength: videoUrl.length,
+      fileName: fileName,
+      folderPath: folderPath
+    });
+    
+    const maxRetries = 3;
+    const tempDir = './temp';
+    let tempFilePath: string | null = null;
 
-  // Tạo thư mục temp nếu chưa có
-  if (!fs.existsSync(tempDir)) {
-    fs.mkdirSync(tempDir, { recursive: true });
-  }
-
-  try {
-    // 1. VALIDATE URL ĐẦY ĐỦ
-    console.log(`🔍 [1/9] Validating URL...`);
-    if (!videoUrl) {
-      throw new Error('Video URL is empty');
+    // Tạo thư mục temp nếu chưa có
+    if (!fs.existsSync(tempDir)) {
+      fs.mkdirSync(tempDir, { recursive: true });
     }
 
-    if (!videoUrl.startsWith('http')) {
-      throw new Error(`Invalid video URL format: Must start with http, got: ${videoUrl.substring(0, 50)}`);
-    }
+    try {
+      // 1. VALIDATE URL ĐẦY ĐỦ
+      console.log(`🔍 [1/9] Validating URL...`);
+      if (!videoUrl) {
+        throw new Error('Video URL is empty');
+      }
 
-    if (videoUrl.length < 50) {
-      throw new Error(`Invalid video URL format: URL too short (${videoUrl.length} chars)`);
-    }
+      if (!videoUrl.startsWith('http')) {
+        throw new Error(`Invalid video URL format: Must start with http, got: ${videoUrl.substring(0, 50)}`);
+      }
 
-    if (!this.isValidVideoUrl(videoUrl)) {
-      throw new Error(`Invalid video URL format: ${videoUrl.substring(0, 100)}`);
-    }
+      if (videoUrl.length < 50) {
+        throw new Error(`Invalid video URL format: URL too short (${videoUrl.length} chars)`);
+      }
 
-    console.log(`✅ [1/9] URL hợp lệ`);
+      if (!this.isValidVideoUrl(videoUrl)) {
+        throw new Error(`Invalid video URL format: ${videoUrl.substring(0, 100)}`);
+      }
 
-    // 2. TẠO TÊN FILE UNIQUE
-    console.log(`🔍 [2/9] Creating unique filename...`);
-    const uniqueFileName = `${this.sanitizeFileName(fileName)}_${Date.now()}.mp4`;
-    const supabaseFilePath = `${folderPath}/${uniqueFileName}`;
+      console.log(`✅ [1/9] URL hợp lệ`);
 
-    console.log(`📁 [2/9] Supabase path: ${supabaseFilePath}`);
+      // 2. TẠO TÊN FILE UNIQUE
+      console.log(`🔍 [2/9] Creating unique filename...`);
+      const uniqueFileName = `${this.sanitizeFileName(fileName)}_${Date.now()}.mp4`;
+      const supabaseFilePath = `${folderPath}/${uniqueFileName}`;
 
-    // 3. KIỂM TRA VIDEO ĐÃ TỒN TẠI CHƯA
-    console.log(`🔍 [3/9] Checking if video already exists on Supabase...`);
-    const existingUrl = await this.checkVideoExistsOnSupabase(supabaseFilePath);
-    if (existingUrl) {
-      console.log(`✅ [3/9] Video đã tồn tại: ${existingUrl}`);
-      return {
-        success: true,
-        url: existingUrl
-      };
-    }
-    console.log(`✅ [3/9] Video chưa tồn tại, tiếp tục upload...`);
+      console.log(`📁 [2/9] Supabase path: ${supabaseFilePath}`);
 
-    // 4. DOWNLOAD VIDEO VỀ TEMP FILE
-    for (let attempt = 1; attempt <= maxRetries; attempt++) {
-      console.log(`🔄 [4/9 - Attempt ${attempt}/${maxRetries}] Downloading video...`);
-      
-      try {
-        tempFilePath = await this.downloadVideoToFile(videoUrl, uniqueFileName);
-        
-        if (!tempFilePath || !fs.existsSync(tempFilePath)) {
-          throw new Error('Failed to download video to temporary file');
-        }
-
-        // 5. VALIDATE FILE ĐÃ TẢI
-        console.log(`🔍 [5/9] Validating downloaded file...`);
-        const fileStats = fs.statSync(tempFilePath);
-        const fileSizeMB = (fileStats.size / 1024 / 1024).toFixed(2);
-        const fileSizeBytes = fileStats.size;
-        
-        console.log(`📊 [5/9] File info:`, {
-          size: `${fileSizeMB} MB (${fileSizeBytes} bytes)`,
-          path: tempFilePath
-        });
-
-        // Kiểm tra kích thước file
-        const minFileSize = 10 * 1024; // 10KB
-        const maxFileSize = 500 * 1024 * 1024; // 500MB
-
-        if (fileSizeBytes < minFileSize) {
-          throw new Error(`File quá nhỏ (${fileSizeBytes} bytes < ${minFileSize} bytes), có thể là error page`);
-        }
-
-        if (fileSizeBytes > maxFileSize) {
-          throw new Error(`File quá lớn (${fileSizeMB} MB > ${maxFileSize / 1024 / 1024} MB)`);
-        }
-
-        console.log(`✅ [5/9] File size hợp lệ`);
-
-        // 6. TÍNH CHECKSUM (optional)
-        console.log(`🔍 [6/9] Calculating checksum...`);
-        const checksum = this.calculateChecksum(tempFilePath);
-        console.log(`🔐 [6/9] Checksum: ${checksum.substring(0, 16)}...`);
-
-        // 7. UPLOAD LÊN SUPABASE
-        console.log(`📤 [7/9] Uploading to Supabase...`);
-        
-        const fileBuffer = fs.readFileSync(tempFilePath);
-        
-        console.log(`🔍 [7.1/9] File buffer size: ${fileBuffer.length} bytes`);
-        
-        const { data, error } = await this.supabase.storage
-          .from(this.videoBucketName)
-          .upload(supabaseFilePath, fileBuffer, {
-            contentType: 'video/mp4',
-            upsert: false,
-            cacheControl: '3600',
-            duplex: 'half'
-          });
-
-        if (error) {
-          // Xử lý trường hợp file đã tồn tại
-          if (error.message?.includes('already exists')) {
-            console.log(`ℹ️ [7/9] File đã tồn tại, lấy URL hiện có`);
-            const { data: existingUrlData } = this.supabase.storage
-              .from(this.videoBucketName)
-              .getPublicUrl(supabaseFilePath);
-            
-            return {
-              success: true,
-              url: existingUrlData.publicUrl
-            };
-          }
-          throw new Error(`Supabase upload error: ${error.message}`);
-        }
-
-        console.log(`✅ [7/9] Upload thành công!`);
-
-        // 8. LẤY PUBLIC URL
-        console.log(`🔗 [8/9] Getting public URL...`);
-        const { data: publicUrlData } = this.supabase.storage
-          .from(this.videoBucketName)
-          .getPublicUrl(supabaseFilePath);
-
-        if (!publicUrlData?.publicUrl) {
-          throw new Error('Could not get public URL from Supabase');
-        }
-
-        console.log(`✅ [8/9] Public URL: ${publicUrlData.publicUrl}`);
-
-        // 9. VERIFY VIDEO SAU KHI UPLOAD
-        console.log(`🔍 [9/9] Verifying uploaded video...`);
-        const verifyResult = await this.verifySupabaseVideo(publicUrlData.publicUrl);
-        
-        if (!verifyResult.accessible) {
-          throw new Error(`Video không thể truy cập sau khi upload: ${verifyResult.error}`);
-        }
-
-        console.log(`🎉 [9/9] Video verification successful!`);
-        console.log(`🎉 [uploadVideoFromUrl] HOÀN THÀNH!`);
-        
+      // 3. KIỂM TRA VIDEO ĐÃ TỒN TẠI CHƯA
+      console.log(`🔍 [3/9] Checking if video already exists on Supabase...`);
+      const existingUrl = await this.checkVideoExistsOnSupabase(supabaseFilePath);
+      if (existingUrl) {
+        console.log(`✅ [3/9] Video đã tồn tại: ${existingUrl}`);
         return {
           success: true,
-          url: publicUrlData.publicUrl
+          url: existingUrl
         };
+      }
+      console.log(`✅ [3/9] Video chưa tồn tại, tiếp tục upload...`);
 
-      } catch (attemptError) {
-        console.log(`💥 [Attempt ${attempt}] LỖI: ${attemptError.message}`);
+      // 4. DOWNLOAD VIDEO VỀ TEMP FILE
+      for (let attempt = 1; attempt <= maxRetries; attempt++) {
+        console.log(`🔄 [4/9 - Attempt ${attempt}/${maxRetries}] Downloading video...`);
         
-        // Dọn dẹp temp file nếu có lỗi
-        if (tempFilePath && fs.existsSync(tempFilePath)) {
-          try {
-            fs.unlinkSync(tempFilePath);
-            console.log(`🧹 Đã xóa temp file sau lỗi`);
-            tempFilePath = null;
-          } catch (cleanupError) {
-            console.error(`⚠️ Không thể xóa temp file:`, cleanupError.message);
+        try {
+          tempFilePath = await this.downloadVideoToFile(videoUrl, uniqueFileName);
+          
+          if (!tempFilePath || !fs.existsSync(tempFilePath)) {
+            throw new Error('Failed to download video to temporary file');
+          }
+
+          // 5. VALIDATE FILE ĐÃ TẢI
+          console.log(`🔍 [5/9] Validating downloaded file...`);
+          const fileStats = fs.statSync(tempFilePath);
+          const fileSizeMB = (fileStats.size / 1024 / 1024).toFixed(2);
+          const fileSizeBytes = fileStats.size;
+          
+          console.log(`📊 [5/9] File info:`, {
+            size: `${fileSizeMB} MB (${fileSizeBytes} bytes)`,
+            path: tempFilePath
+          });
+
+          // Kiểm tra kích thước file
+          const minFileSize = 10 * 1024; // 10KB
+          const maxFileSize = 500 * 1024 * 1024; // 500MB
+
+          if (fileSizeBytes < minFileSize) {
+            throw new Error(`File quá nhỏ (${fileSizeBytes} bytes < ${minFileSize} bytes), có thể là error page`);
+          }
+
+          if (fileSizeBytes > maxFileSize) {
+            throw new Error(`File quá lớn (${fileSizeMB} MB > ${maxFileSize / 1024 / 1024} MB)`);
+          }
+
+          console.log(`✅ [5/9] File size hợp lệ`);
+
+          // 6. TÍNH CHECKSUM (optional)
+          console.log(`🔍 [6/9] Calculating checksum...`);
+          const checksum = this.calculateChecksum(tempFilePath);
+          console.log(`🔐 [6/9] Checksum: ${checksum.substring(0, 16)}...`);
+
+          // 7. UPLOAD LÊN SUPABASE
+          console.log(`📤 [7/9] Uploading to Supabase...`);
+          
+          const fileBuffer = fs.readFileSync(tempFilePath);
+          
+          console.log(`🔍 [7.1/9] File buffer size: ${fileBuffer.length} bytes`);
+          
+          const { data, error } = await this.supabase.storage
+            .from(this.videoBucketName)
+            .upload(supabaseFilePath, fileBuffer, {
+              contentType: 'video/mp4',
+              upsert: false,
+              cacheControl: '3600',
+              duplex: 'half'
+            });
+
+          if (error) {
+            // Xử lý trường hợp file đã tồn tại
+            if (error.message?.includes('already exists')) {
+              console.log(`ℹ️ [7/9] File đã tồn tại, lấy URL hiện có`);
+              const { data: existingUrlData } = this.supabase.storage
+                .from(this.videoBucketName)
+                .getPublicUrl(supabaseFilePath);
+              
+              return {
+                success: true,
+                url: existingUrlData.publicUrl
+              };
+            }
+            throw new Error(`Supabase upload error: ${error.message}`);
+          }
+
+          console.log(`✅ [7/9] Upload thành công!`);
+
+          // 8. LẤY PUBLIC URL
+          console.log(`🔗 [8/9] Getting public URL...`);
+          const { data: publicUrlData } = this.supabase.storage
+            .from(this.videoBucketName)
+            .getPublicUrl(supabaseFilePath);
+
+          if (!publicUrlData?.publicUrl) {
+            throw new Error('Could not get public URL from Supabase');
+          }
+
+          console.log(`✅ [8/9] Public URL: ${publicUrlData.publicUrl}`);
+
+          // 9. VERIFY VIDEO SAU KHI UPLOAD
+          console.log(`🔍 [9/9] Verifying uploaded video...`);
+          const verifyResult = await this.verifySupabaseVideo(publicUrlData.publicUrl);
+          
+          if (!verifyResult.accessible) {
+            throw new Error(`Video không thể truy cập sau khi upload: ${verifyResult.error}`);
+          }
+
+          console.log(`🎉 [9/9] Video verification successful!`);
+          console.log(`🎉 [uploadVideoFromUrl] HOÀN THÀNH!`);
+          
+          return {
+            success: true,
+            url: publicUrlData.publicUrl
+          };
+
+        } catch (attemptError) {
+          console.log(`💥 [Attempt ${attempt}] LỖI: ${attemptError.message}`);
+          
+          // Dọn dẹp temp file nếu có lỗi
+          if (tempFilePath && fs.existsSync(tempFilePath)) {
+            try {
+              fs.unlinkSync(tempFilePath);
+              console.log(`🧹 Đã xóa temp file sau lỗi`);
+              tempFilePath = null;
+            } catch (cleanupError) {
+              console.error(`⚠️ Không thể xóa temp file:`, cleanupError.message);
+            }
+          }
+
+          if (attempt < maxRetries) {
+            const delay = attempt * 2000;
+            console.log(`⏳ Đợi ${delay/1000}s trước khi thử lại...`);
+            await new Promise(resolve => setTimeout(resolve, delay));
+          } else {
+            throw attemptError;
           }
         }
-
-        if (attempt < maxRetries) {
-          const delay = attempt * 2000;
-          console.log(`⏳ Đợi ${delay/1000}s trước khi thử lại...`);
-          await new Promise(resolve => setTimeout(resolve, delay));
-        } else {
-          throw attemptError;
-        }
       }
-    }
 
-    throw new Error('All upload attempts failed');
+      throw new Error('All upload attempts failed');
 
-  } catch (error) {
-    console.error(`❌ [uploadVideoFromUrl] LỖI NGHIÊM TRỌNG:`, error.message);
-    return {
-      success: false,
-      error: error.message
-    };
-  } finally {
-    // CLEANUP: Luôn xóa temp file
-    if (tempFilePath && fs.existsSync(tempFilePath)) {
-      try {
-        fs.unlinkSync(tempFilePath);
-        console.log(`🧹 Đã xóa temp file trong finally`);
-      } catch (cleanupError) {
-        console.error(`⚠️ Không thể xóa temp file:`, cleanupError.message);
+    } catch (error) {
+      console.error(`❌ [uploadVideoFromUrl] LỖI NGHIÊM TRỌNG:`, error.message);
+      return {
+        success: false,
+        error: error.message
+      };
+    } finally {
+      // CLEANUP: Luôn xóa temp file
+      if (tempFilePath && fs.existsSync(tempFilePath)) {
+        try {
+          fs.unlinkSync(tempFilePath);
+          console.log(`🧹 Đã xóa temp file trong finally`);
+        } catch (cleanupError) {
+          console.error(`⚠️ Không thể xóa temp file:`, cleanupError.message);
+        }
       }
     }
   }
-}
 
 // CÁC HELPER METHODS CẦN THIẾT:
 
@@ -272,10 +802,6 @@ private isValidVideoUrl(url: string): boolean {
   
   console.log(`🔍 [isValidVideoUrl] "${url.substring(0, 100)}..." -> ${isValid}`);
   return isValid;
-}
-
-private sanitizeFileName(fileName: string): string {
-  return fileName.replace(/[^a-zA-Z0-9-_]/g, '_');
 }
 
 private async checkVideoExistsOnSupabase(filePath: string): Promise<string | null> {
@@ -295,10 +821,6 @@ private async checkVideoExistsOnSupabase(filePath: string): Promise<string | nul
   }
 }
 
-private calculateChecksum(filePath: string): string {
-  const fileBuffer = fs.readFileSync(filePath);
-  return require('crypto').createHash('md5').update(fileBuffer).digest('hex');
-}
 
 private async verifySupabaseVideo(videoUrl: string): Promise<{ accessible: boolean; error?: string }> {
   try {
@@ -398,41 +920,6 @@ async autoUploadHeygenVideo(
   return result.url;
 }
 
-  /**
-   * Cleanup old temp files
-   */
-  async cleanupOldTempFiles(maxAgeHours: number = 24): Promise<number> {
-    try {
-      if (!fs.existsSync(this.tempDir)) {
-        return 0;
-      }
-
-      const files = fs.readdirSync(this.tempDir);
-      const now = Date.now();
-      const maxAgeMs = maxAgeHours * 60 * 60 * 1000;
-      let deletedCount = 0;
-
-      for (const file of files) {
-        const filePath = path.join(this.tempDir, file);
-        const stats = fs.statSync(filePath);
-        const ageMs = now - stats.mtimeMs;
-
-        if (ageMs > maxAgeMs) {
-          fs.unlinkSync(filePath);
-          deletedCount++;
-        }
-      }
-
-      if (deletedCount > 0) {
-        this.logger.log(`🧹 Đã xóa ${deletedCount} temp files cũ`);
-      }
-
-      return deletedCount;
-    } catch (error) {
-      this.logger.error(`❌ Lỗi cleanup temp files:`, error);
-      return 0;
-    }
-  }
 
   
 
@@ -689,6 +1176,175 @@ async getVideoMetadata(videoUrl: string): Promise<any> {
       console.error('❌ Lỗi khi xóa ảnh:', error);
     }
   }
+
+
+  async uploadLessonVideo(
+    file: Express.Multer.File,
+    lessonId: number,
+    courseId: number
+  ): Promise<{ url: string; size: number; duration?: number }> {
+    try {
+      // Validate file
+      if (!file) {
+        throw new BadRequestException('Không có file video');
+      }
+
+      // Kiểm tra mimetype video
+      const allowedMimeTypes = [
+        'video/mp4',
+        'video/webm',
+        'video/ogg',
+        'video/quicktime',
+        'video/x-msvideo',
+        'video/x-matroska'
+      ];
+
+      if (!allowedMimeTypes.includes(file.mimetype)) {
+        throw new BadRequestException(
+          `Loại file không hỗ trợ. Chỉ chấp nhận: ${allowedMimeTypes.join(', ')}`
+        );
+      }
+
+      // Kiểm tra kích thước (ví dụ: max 500MB)
+      const maxSize = 500 * 1024 * 1024; // 500MB
+      if (file.size > maxSize) {
+        const sizeMB = (file.size / 1024 / 1024).toFixed(2);
+        const maxSizeMB = (maxSize / 1024 / 1024).toFixed(2);
+        throw new BadRequestException(
+          `File quá lớn (${sizeMB}MB). Tối đa: ${maxSizeMB}MB`
+        );
+      }
+
+      // Tạo tên file unique
+      const timestamp = Date.now();
+      const originalName = file.originalname.replace(/[^a-zA-Z0-9.-]/g, '_');
+      const fileName = `lesson_${lessonId}_${timestamp}_${originalName}`;
+      const folderPath = `courses/${courseId}/lessons`;
+      const filePath = `${folderPath}/${fileName}`;
+
+      console.log(`📤 Đang upload video lesson: ${filePath}`);
+      console.log(`📊 File info:`, {
+        size: `${(file.size / 1024 / 1024).toFixed(2)} MB`,
+        mimetype: file.mimetype,
+        originalName: file.originalname
+      });
+
+      // Upload lên Supabase
+      const { data: uploadData, error: uploadError } = await this.supabase.storage
+        .from(this.videoBucketName)
+        .upload(filePath, file.buffer, {
+          contentType: file.mimetype,
+          upsert: false,
+          cacheControl: '3600',
+          duplex: 'half'
+        });
+
+      if (uploadError) {
+        // Kiểm tra nếu file đã tồn tại
+        if (uploadError.message?.includes('already exists')) {
+          console.log(`ℹ️ File đã tồn tại, lấy URL hiện có`);
+        } else {
+          throw new Error(`Supabase upload error: ${uploadError.message}`);
+        }
+      }
+
+      // Lấy public URL
+      const { data: publicUrlData } = this.supabase.storage
+        .from(this.videoBucketName)
+        .getPublicUrl(filePath);
+
+      if (!publicUrlData?.publicUrl) {
+        throw new Error('Không thể lấy public URL từ Supabase');
+      }
+
+      // Kiểm tra video có play được không
+      const verifyResult = await this.checkVideoPlayable(publicUrlData.publicUrl);
+      if (!verifyResult.playable) {
+        // Nếu không play được, xóa file đã upload
+        await this.deleteVideo(publicUrlData.publicUrl);
+        throw new BadRequestException(`Video không hợp lệ: ${verifyResult.error}`);
+      }
+
+      console.log(`✅ Upload video lesson thành công: ${publicUrlData.publicUrl}`);
+
+      // Trả về thông tin video
+      return {
+        url: publicUrlData.publicUrl,
+        size: file.size,
+        // Nếu có thể lấy duration thì thêm vào
+        duration: await this.getVideoDuration(file)
+      };
+
+    } catch (error) {
+      console.error('❌ Lỗi upload video lesson:', error);
+      throw new BadRequestException(`Không thể upload video: ${error.message}`);
+    }
+  }
+
+  private async getVideoDuration(file: Express.Multer.File): Promise<number | undefined> {
+    try {
+      console.log(`🔍 Đang lấy duration cho video: ${file.originalname}`);
+      console.log(`📊 File size: ${(file.size / 1024 / 1024).toFixed(2)} MB`);
+      console.log(`📋 Mime type: ${file.mimetype}`);
+
+      // Đảm bảo thư mục temp tồn tại
+      this.ensureTempDirectory();
+
+      // Tạo tên file tạm an toàn
+      const safeFileName = this.sanitizeFileName(file.originalname);
+      const tempFilePath = path.join(this.tempDir, `temp_${Date.now()}_${safeFileName}`);
+      
+      console.log(`💾 Lưu file tạm: ${tempFilePath}`);
+
+      // Lưu buffer vào file tạm
+      fs.writeFileSync(tempFilePath, file.buffer);
+
+      // Kiểm tra file đã được lưu
+      if (!fs.existsSync(tempFilePath)) {
+        throw new Error('Không thể tạo file tạm');
+      }
+
+      const fileStats = fs.statSync(tempFilePath);
+      console.log(`✅ File tạm đã lưu: ${(fileStats.size / 1024 / 1024).toFixed(2)} MB`);
+
+      // Lấy duration
+      console.log(`⏳ Đang phân tích video duration...`);
+      const duration = await getVideoDurationInSeconds(tempFilePath);
+      
+      console.log(`✅ Phân tích hoàn tất, đang dọn dẹp...`);
+
+      // Dọn dẹp file tạm
+      if (fs.existsSync(tempFilePath)) {
+        fs.unlinkSync(tempFilePath);
+        console.log(`🧹 Đã xóa file tạm`);
+      }
+
+      if (duration && duration > 0) {
+        // Format duration để hiển thị đẹp
+        const formattedDuration = this.formatDuration(duration);
+        console.log(`⏱️ Video duration: ${duration.toFixed(2)} seconds (${formattedDuration})`);
+        return duration;
+      } else {
+        console.warn(`⚠️ Không lấy được duration hoặc duration = 0`);
+        return undefined;
+      }
+
+    } catch (error: any) {
+      console.error(`❌ Lỗi khi lấy duration:`, {
+        message: error.message,
+        stack: error.stack
+      });
+
+
+      return undefined;
+    }
+  }
+
+ 
+
+  
+
+
 
 
 }

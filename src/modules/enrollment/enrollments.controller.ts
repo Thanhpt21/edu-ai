@@ -77,7 +77,7 @@ export class EnrollmentsController {
   }
 
   // Cập nhật progress tự động
-  @Patch(':id/progress')
+  @Put(':id/progress')
   @UseGuards(JwtAuthGuard)
   async updateProgress(@Param('id', ParseIntPipe) id: number) {
     return this.enrollmentsService.updateProgress(id);

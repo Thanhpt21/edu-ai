@@ -9,12 +9,15 @@ import {
   Query,
   ParseIntPipe,
   UseGuards,
+  UseInterceptors,
+  UploadedFile,
 } from '@nestjs/common';
 import { LessonsService } from './lessons.service';
 import { CreateLessonDto } from './dto/create-lesson.dto';
 import { UpdateLessonDto } from './dto/update-lesson.dto';
 import { LessonQueryDto } from './dto/lesson-query.dto';
 import { JwtAuthGuard } from 'src/common/guards/jwt-auth.guard';
+import { FileInterceptor } from '@nestjs/platform-express';
 
 @Controller('lessons')
 export class LessonsController {
@@ -23,8 +26,12 @@ export class LessonsController {
   // Tạo lesson mới
   @Post()
   @UseGuards(JwtAuthGuard)
-  async createLesson(@Body() dto: CreateLessonDto) {
-    return this.lessonsService.createLesson(dto);
+  @UseInterceptors(FileInterceptor('videoFile'))
+  async createLesson(
+    @Body() dto: CreateLessonDto,
+    @UploadedFile() videoFile?: Express.Multer.File,
+  ) {
+    return this.lessonsService.createLesson(dto, videoFile);
   }
 
   // Lấy danh sách lessons
@@ -52,13 +59,15 @@ export class LessonsController {
   }
 
   // Cập nhật lesson
-  @Put(':id')
+    @Put(':id')
   @UseGuards(JwtAuthGuard)
+  @UseInterceptors(FileInterceptor('videoFile'))
   async updateLesson(
     @Param('id', ParseIntPipe) id: number,
-    @Body() dto: UpdateLessonDto
+    @Body() dto: UpdateLessonDto,
+    @UploadedFile() videoFile?: Express.Multer.File,
   ) {
-    return this.lessonsService.updateLesson(id, dto);
+    return this.lessonsService.updateLesson(id, dto, videoFile);
   }
 
   // Xóa lesson
