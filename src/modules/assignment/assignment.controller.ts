@@ -52,25 +52,23 @@ export class AssignmentController {
       })
     ) file?: Express.Multer.File,
   ) {
-    console.log(`📤 [AssignmentController] Create assignment DTO:`, dto);
-    console.log(`📤 [AssignmentController] File:`, file ? `${file.originalname} (${file.size} bytes)` : 'none');
     
     return this.assignmentService.createAssignment(dto, file);
   }
 
   // Lấy danh sách assignments
-  @Get()
-  @UseGuards(JwtAuthGuard)
-  async getAssignments(@Query() query: AssignmentQueryDto) {
-    console.log(`🔍 [AssignmentController] Get assignments query:`, query);
-    return this.assignmentService.getAssignments(query);
-  }
-
+@Get()
+@UseGuards(JwtAuthGuard)
+@UsePipes(new ValidationPipe({ transform: true }))
+async getAssignments(
+  @Query() query: AssignmentQueryDto, 
+) {
+  return this.assignmentService.getAssignments(query);
+}
   // Lấy assignment theo ID
   @Get(':id')
   @UseGuards(JwtAuthGuard)
   async getAssignmentById(@Param('id', ParseIntPipe) id: number) {
-    console.log(`🔍 [AssignmentController] Get assignment by ID: ${id}`);
     return this.assignmentService.getAssignmentById(id);
   }
 
@@ -78,7 +76,6 @@ export class AssignmentController {
   @Get('course/:courseId')
   @UseGuards(JwtAuthGuard)
   async getCourseAssignments(@Param('courseId', ParseIntPipe) courseId: number) {
-    console.log(`🔍 [AssignmentController] Get assignments for course: ${courseId}`);
     return this.assignmentService.getCourseAssignments(courseId);
   }
 
@@ -86,14 +83,13 @@ export class AssignmentController {
   @Get('lesson/:lessonId')
   @UseGuards(JwtAuthGuard)
   async getLessonAssignments(@Param('lessonId', ParseIntPipe) lessonId: number) {
-    console.log(`🔍 [AssignmentController] Get assignments for lesson: ${lessonId}`);
     return this.assignmentService.getLessonAssignments(lessonId);
   }
 
   // Cập nhật assignment (với file upload)
   @Put(':id')
+@UseInterceptors(FileInterceptor('file'))
   @UseGuards(JwtAuthGuard)
-  @UseInterceptors(FileInterceptor('file'))
   @UsePipes(new ValidationPipe({ transform: true }))
   async updateAssignment(
     @Param('id', ParseIntPipe) id: number,
@@ -121,7 +117,6 @@ export class AssignmentController {
     @Param('id', ParseIntPipe) id: number,
     @Body('status') status: AssignmentStatus,
   ) {
-    console.log(`🔄 [AssignmentController] Change assignment status: ${id} -> ${status}`);
     return this.assignmentService.changeAssignmentStatus(id, status);
   }
 
@@ -132,7 +127,6 @@ export class AssignmentController {
     @Param('id', ParseIntPipe) id: number,
     @Body('status') status: AssignmentStatus,
   ) {
-    console.log(`🔄 [AssignmentController] Change assignment status (PUT): ${id} -> ${status}`);
     return this.assignmentService.changeAssignmentStatus(id, status);
   }
 
@@ -140,14 +134,12 @@ export class AssignmentController {
   @Delete(':id')
   @UseGuards(JwtAuthGuard)
   async deleteAssignment(@Param('id', ParseIntPipe) id: number) {
-    console.log(`🗑️ [AssignmentController] Delete assignment: ${id}`);
     return this.assignmentService.deleteAssignment(id);
   }
 
  @Delete(':id/file')
   @UseGuards(JwtAuthGuard)
   async deleteAssignmentFiles(@Param('id', ParseIntPipe) id: number) {
-    console.log(`🗑️ [AssignmentController] Delete assignment file only: ${id}`);
     
     return this.assignmentService.deleteAssignmentFile(id);
   }
@@ -161,7 +153,6 @@ export class AssignmentController {
     @Param('userId', ParseIntPipe) userId: number,
     @Query('courseId') courseId?: string
   ) {
-    console.log(`🔍 [AssignmentController] Get assignments for user: ${userId}, course: ${courseId}`);
     
     // You can implement this if needed
     // return this.assignmentService.getUserAssignments(userId, courseId ? parseInt(courseId) : undefined);
@@ -185,9 +176,6 @@ export class AssignmentController {
     @Query('page') page?: string,
     @Query('limit') limit?: string
   ) {
-    console.log(`🔍 [AssignmentController] Advanced search:`, {
-      keyword, courseId, lessonId, status, page, limit
-    });
     
     const query: AssignmentQueryDto = {
       page: page ? parseInt(page) : 1,
@@ -210,7 +198,6 @@ export class AssignmentController {
     @Query('courseId') courseId?: string,
     @Query('instructorId') instructorId?: string
   ) {
-    console.log(`📊 [AssignmentController] Get assignment stats:`, { courseId, instructorId });
     
     // You can implement stats endpoint
     return {
@@ -233,8 +220,6 @@ export class AssignmentController {
   @Delete(':id/file')
   @UseGuards(JwtAuthGuard)
   async deleteAssignmentFile(@Param('id', ParseIntPipe) id: number) {
-    console.log(`🗑️ [AssignmentController] Delete assignment file only: ${id}`);
-    
     // You can implement this endpoint to only delete the file
     // return this.assignmentService.deleteAssignmentFile(id);
     

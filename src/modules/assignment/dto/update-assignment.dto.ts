@@ -17,8 +17,13 @@ export class UpdateAssignmentDto {
   fileUrl?: string | null;
 
   @IsOptional()
-  @IsDateString()
-  dueDate?: string | null;
+    @Transform(({ value }) => {
+    if (!value || value === '' || value === 'null') {
+        return null
+    }
+    return value
+    })
+    dueDate?: string | null
 
   @IsOptional()
   @IsInt()

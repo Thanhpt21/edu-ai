@@ -19,29 +19,18 @@ export class AssignmentService {
 
   // Tạo assignment mới
  async createAssignment(dto: CreateAssignmentDto, file?: Express.Multer.File) {
-    console.log(`📥 [createAssignment] DTO received:`, dto);
-    console.log(`📥 [createAssignment] DTO types:`, {
-      courseId: typeof dto.courseId,
-      lessonId: typeof dto.lessonId,
-      maxScore: typeof dto.maxScore
-    });
-
     // Verify course exists if provided (đã là number sau transform)
     if (dto.courseId) {
-      console.log(`🔍 [createAssignment] Checking course: ${dto.courseId} (type: ${typeof dto.courseId})`);
       const course = await this.prisma.course.findUnique({
         where: { id: dto.courseId }
       });
       if (!course) {
-        console.error(`❌ [createAssignment] Course not found: ${dto.courseId}`);
         throw new BadRequestException('Course không tồn tại');
       }
-      console.log(`✅ [createAssignment] Course found: ${course.title}`);
     }
 
     // Verify lesson exists if provided (đã là number sau transform)
     if (dto.lessonId) {
-      console.log(`🔍 [createAssignment] Checking lesson: ${dto.lessonId} (type: ${typeof dto.lessonId})`);
       const lesson = await this.prisma.lesson.findUnique({
         where: { id: dto.lessonId }
       });
@@ -49,14 +38,12 @@ export class AssignmentService {
         console.error(`❌ [createAssignment] Lesson not found: ${dto.lessonId}`);
         throw new BadRequestException('Lesson không tồn tại');
       }
-      console.log(`✅ [createAssignment] Lesson found: ${lesson.title}`);
     }
 
     // Upload file nếu có - SỬ DỤNG FILE BUCKET
     let fileUrl: string | null = dto.fileUrl || null;
     if (file) {
       try {
-        console.log(`📤 [createAssignment] Uploading file: ${file.originalname}`);
         const uploadResult = await this.uploadService.uploadAssignmentFile(
           file,
           dto.courseId || undefined,
@@ -69,9 +56,7 @@ export class AssignmentService {
         }
 
         fileUrl = uploadResult.url || null;
-        console.log(`✅ [createAssignment] File uploaded: ${fileUrl}`);
       } catch (error: any) {
-        console.error(`❌ [createAssignment] Upload error:`, error.message);
         throw new BadRequestException(`Upload file thất bại: ${error.message}`);
       }
     }
@@ -83,7 +68,6 @@ export class AssignmentService {
         const parsedDate = new Date(dto.dueDate);
         if (!isNaN(parsedDate.getTime())) {
           dueDateValue = parsedDate;
-          console.log(`✅ [createAssignment] DueDate parsed: ${dueDateValue}`);
         } else {
           console.warn(`⚠️ [createAssignment] Invalid dueDate format: ${dto.dueDate}`);
         }
@@ -104,14 +88,6 @@ export class AssignmentService {
       status: dto.status || AssignmentStatus.DRAFT,
     };
 
-    console.log(`📝 [createAssignment] Creating assignment with data:`, {
-      title: assignmentData.title,
-      courseId: assignmentData.courseId,
-      lessonId: assignmentData.lessonId,
-      maxScore: assignmentData.maxScore,
-      status: assignmentData.status
-    });
-
     // Create assignment
     try {
       const assignment = await this.prisma.assignment.create({
@@ -119,7 +95,6 @@ export class AssignmentService {
         include: this.getAssignmentInclude(),
       });
 
-      console.log(`✅ [createAssignment] Assignment created: ${assignment.id}`);
 
       // Tính thống kê
       const stats = await this.getAssignmentStats(assignment.id);
@@ -139,66 +114,74 @@ export class AssignmentService {
   }
 
   // Lấy danh sách assignments
-  async getAssignments(query: AssignmentQueryDto) {
-    const { page = 1, limit = 10, courseId, lessonId, status, search = '' } = query;
-    const skip = (page - 1) * limit;
+async getAssignments(query: AssignmentQueryDto) {
+  const { page = 1, limit = 10, courseId, lessonId, status, search = '' } = query;
+  const skip = (page - 1) * limit;
 
-    const where: Prisma.AssignmentWhereInput = {
-      AND: [
-        courseId ? { courseId } : {},
-        lessonId ? { lessonId } : {},
-        status ? { status } : {},
-        search ? {
-          OR: [
-            { title: { contains: search, mode: 'insensitive' as Prisma.QueryMode } },
-            { description: { contains: search, mode: 'insensitive' as Prisma.QueryMode } },
-            { course: { title: { contains: search, mode: 'insensitive' as Prisma.QueryMode } } },
-          ],
-        } : {},
+  console.log('🔍 [getAssignments] Query params:', {
+    courseId,
+    lessonId,
+    status,
+    search,
+    types: {
+      courseId: typeof courseId,
+      lessonId: typeof lessonId,
+    }
+  });
+
+  // 👇 XÂY DỰNG WHERE CLAUSE ĐÚNG CÁCH
+  const where: Prisma.AssignmentWhereInput = {
+    // Chỉ thêm điều kiện nếu giá trị tồn tại
+    ...(courseId && { courseId: courseId }), // courseId đã là number
+    ...(lessonId && { lessonId: lessonId }), // lessonId đã là number
+    ...(status && { status: status }),
+    ...(search && {
+      OR: [
+        { title: { contains: search, mode: 'insensitive' as Prisma.QueryMode } },
+        { description: { contains: search, mode: 'insensitive' as Prisma.QueryMode } },
+        { course: { title: { contains: search, mode: 'insensitive' as Prisma.QueryMode } } },
       ],
-    };
+    }),
+  };
 
-    console.log(`🔍 [getAssignments] Query:`, { page, limit, courseId, lessonId, status, search });
+  console.log('🔍 [getAssignments] Where clause:', JSON.stringify(where, null, 2));
 
-    const [assignments, total] = await this.prisma.$transaction([
-      this.prisma.assignment.findMany({
-        where,
-        skip,
-        take: Number(limit),
-        include: this.getAssignmentInclude(),
-        orderBy: { createdAt: 'desc' },
-      }),
-      this.prisma.assignment.count({ where }),
-    ]);
+  const [assignments, total] = await this.prisma.$transaction([
+    this.prisma.assignment.findMany({
+      where,
+      skip,
+      take: Number(limit),
+      include: this.getAssignmentInclude(),
+      orderBy: { createdAt: 'desc' },
+    }),
+    this.prisma.assignment.count({ where }),
+  ]);
 
-    console.log(`✅ [getAssignments] Found ${assignments.length} assignments, total: ${total}`);
+  // Tính thống kê cho từng assignment
+  const assignmentsWithStats = await Promise.all(
+    assignments.map(async (assignment) => {
+      const stats = await this.getAssignmentStats(assignment.id);
+      return {
+        ...this.formatAssignmentResponse(assignment),
+        stats,
+      };
+    })
+  );
 
-    // Tính thống kê cho từng assignment
-    const assignmentsWithStats = await Promise.all(
-      assignments.map(async (assignment) => {
-        const stats = await this.getAssignmentStats(assignment.id);
-        return {
-          ...this.formatAssignmentResponse(assignment),
-          stats,
-        };
-      })
-    );
-
-    return {
-      success: true,
-      message: 'Lấy danh sách assignments thành công',
-      data: {
-        data: assignmentsWithStats,
-        total,
-        page,
-        pageCount: Math.ceil(total / limit),
-      },
-    };
-  }
+  return {
+    success: true,
+    message: 'Lấy danh sách assignments thành công',
+    data: {
+      data: assignmentsWithStats,
+      total,
+      page,
+      pageCount: Math.ceil(total / limit),
+    },
+  };
+}
 
   // Lấy assignment theo ID
   async getAssignmentById(id: number) {
-    console.log(`🔍 [getAssignmentById] Getting assignment: ${id}`);
     
     const assignment = await this.prisma.assignment.findUnique({
       where: { id },
@@ -212,7 +195,6 @@ export class AssignmentService {
 
     const stats = await this.getAssignmentStats(id);
 
-    console.log(`✅ [getAssignmentById] Found assignment: ${assignment.title}`);
 
     return {
       success: true,
@@ -226,7 +208,6 @@ export class AssignmentService {
 
   // Lấy assignments của course
   async getCourseAssignments(courseId: number) {
-    console.log(`🔍 [getCourseAssignments] Getting assignments for course: ${courseId}`);
     
     const course = await this.prisma.course.findUnique({
       where: { id: courseId }
@@ -245,7 +226,6 @@ export class AssignmentService {
       orderBy: { createdAt: 'desc' },
     });
 
-    console.log(`✅ [getCourseAssignments] Found ${assignments.length} assignments for course ${courseId}`);
 
     const assignmentsWithStats = await Promise.all(
       assignments.map(async (assignment) => {
@@ -266,13 +246,11 @@ export class AssignmentService {
 
   // Lấy assignments của lesson
   async getLessonAssignments(lessonId: number) {
-    console.log(`🔍 [getLessonAssignments] Getting assignments for lesson: ${lessonId}`);
     
     const lesson = await this.prisma.lesson.findUnique({
       where: { id: lessonId }
     });
     if (!lesson) {
-      console.error(`❌ [getLessonAssignments] Lesson not found: ${lessonId}`);
       throw new NotFoundException('Lesson không tồn tại');
     }
 
@@ -285,7 +263,6 @@ export class AssignmentService {
       orderBy: { createdAt: 'desc' },
     });
 
-    console.log(`✅ [getLessonAssignments] Found ${assignments.length} assignments for lesson ${lessonId}`);
 
     const assignmentsWithStats = await Promise.all(
       assignments.map(async (assignment) => {
@@ -305,84 +282,108 @@ export class AssignmentService {
   }
 
   // Cập nhật assignment
-  async updateAssignment(id: number, dto: UpdateAssignmentDto, file?: Express.Multer.File) {
-    console.log(`🔍 [updateAssignment] Updating assignment: ${id}`, dto);
-    
-    const assignment = await this.prisma.assignment.findUnique({ where: { id } });
-    if (!assignment) {
-      console.error(`❌ [updateAssignment] Assignment not found: ${id}`);
-      throw new NotFoundException('Assignment không tồn tại');
-    }
+async updateAssignment(id: number, dto: UpdateAssignmentDto, file?: Express.Multer.File) {
+  
+  const assignment = await this.prisma.assignment.findUnique({ where: { id } });
+  if (!assignment) {
+    console.error(`❌ [updateAssignment] Assignment not found: ${id}`);
+    throw new NotFoundException('Assignment không tồn tại');
+  }
 
-    // Upload file mới nếu có - SỬ DỤNG FILE BUCKET
-    let fileUrl: string | null = assignment.fileUrl;
-    if (file) {
-      try {
-        // Xóa file cũ nếu có
-        if (assignment.fileUrl) {
-          console.log(`🗑️ [updateAssignment] Deleting old file: ${assignment.fileUrl}`);
+  // Upload file mới nếu có
+  let fileUrl: string | null = assignment.fileUrl;
+  
+  if (file && file.buffer && file.buffer.length > 0) {
+    try {
+      // Xóa file cũ nếu có
+      if (assignment.fileUrl) {
+        try {
           const deleteResult = await this.uploadService.deleteFile(assignment.fileUrl);
           if (!deleteResult.success) {
             console.warn(`⚠️ [updateAssignment] Failed to delete old file: ${deleteResult.error}`);
-          }
-        }
-
-        console.log(`📤 [updateAssignment] Uploading new file...`);
-        const uploadResult = await this.uploadService.uploadAssignmentFile(
-          file,
-          assignment.courseId || dto.courseId || undefined,
-          assignment.id
-        );
-
-        if (!uploadResult.success) {
-          throw new BadRequestException(uploadResult.error || 'Upload file thất bại');
-        }
-
-        fileUrl = uploadResult.url || null;
-        console.log(`✅ [updateAssignment] New file uploaded: ${fileUrl}`);
-      } catch (error: any) {
-        console.error(`❌ [updateAssignment] Upload file error:`, error.message);
-        throw new BadRequestException(`Upload file thất bại: ${error.message}`);
-      }
-    } else if (dto.fileUrl !== undefined) {
-      // Nếu có dto.fileUrl (có thể là null để xóa file)
-      fileUrl = dto.fileUrl || null;
-    }
-
-    // Parse dueDate từ string sang Date nếu có
-    let dueDateValue: Date | null = assignment.dueDate;
-    if (dto.dueDate !== undefined) {
-      if (dto.dueDate === null || dto.dueDate === '') {
-        dueDateValue = null;
-      } else {
-        try {
-          const parsedDate = new Date(dto.dueDate);
-          if (!isNaN(parsedDate.getTime())) {
-            dueDateValue = parsedDate;
           } else {
-            console.warn(`⚠️ [updateAssignment] Invalid dueDate format: ${dto.dueDate}`);
+            console.log(`✅ [updateAssignment] Old file deleted successfully`);
           }
-        } catch (error) {
-          console.warn(`⚠️ [updateAssignment] Error parsing dueDate: ${error.message}`);
+        } catch (deleteError) {
+          console.warn(`⚠️ [updateAssignment] Error deleting old file:`, deleteError);
         }
       }
+
+      
+      // Sử dụng courseId và assignmentId để tạo folder path
+      const uploadCourseId = dto.courseId || assignment.courseId;
+      
+      const uploadResult = await this.uploadService.uploadAssignmentFile(
+        file,
+        uploadCourseId || undefined,
+        assignment.id
+      );
+
+
+      if (!uploadResult.success) {
+        console.error(`❌ [updateAssignment] Upload failed:`, uploadResult.error);
+        throw new BadRequestException(uploadResult.error || 'Upload file thất bại');
+      }
+
+      fileUrl = uploadResult.url || null;
+    } catch (error: any) {
+      throw new BadRequestException(`Upload file thất bại: ${error.message}`);
     }
+  } else if (dto.fileUrl !== undefined) {
+    // Nếu có dto.fileUrl (có thể là null để xóa file)
+    fileUrl = dto.fileUrl || null;
+  }
 
-    // Build update data với type đúng
-    const updateData: any = {};
+  // Kiểm tra nếu file bị xóa (người dùng xóa file trong UI)
+  if (dto.fileUrl === '' && !file) {
+    fileUrl = null;
+    
+    if (assignment.fileUrl) {
+      try {
+        const deleteResult = await this.uploadService.deleteFile(assignment.fileUrl);
+        if (!deleteResult.success) {
+          console.warn(`⚠️ [updateAssignment] Failed to delete file from storage:`, deleteResult.error);
+        }
+      } catch (deleteError) {
+        console.warn(`⚠️ [updateAssignment] Error deleting file:`, deleteError);
+      }
+    }
+  }
 
-    // Chỉ update các field có giá trị (không phải undefined)
-    if (dto.title !== undefined) updateData.title = dto.title;
-    if (dto.description !== undefined) updateData.description = dto.description || null;
-    if (fileUrl !== undefined) updateData.fileUrl = fileUrl;
-    if (dueDateValue !== undefined) updateData.dueDate = dueDateValue;
-    if (dto.maxScore !== undefined) updateData.maxScore = dto.maxScore;
-    if (dto.courseId !== undefined) updateData.courseId = dto.courseId || null;
-    if (dto.lessonId !== undefined) updateData.lessonId = dto.lessonId || null;
-    if (dto.status !== undefined) updateData.status = dto.status;
+  // Parse dueDate từ string sang Date nếu có
+  let dueDateValue: Date | null = assignment.dueDate;
+  if (dto.dueDate !== undefined) {
+    if (dto.dueDate === null || dto.dueDate === '') {
+      dueDateValue = null;
+    } else {
+      try {
+        const parsedDate = new Date(dto.dueDate);
+        if (!isNaN(parsedDate.getTime())) {
+          dueDateValue = parsedDate;
+        } else {
+          console.warn(`⚠️ [updateAssignment] Invalid dueDate format: ${dto.dueDate}`);
+        }
+      } catch (error) {
+        console.warn(`⚠️ [updateAssignment] Error parsing dueDate:`, error);
+      }
+    }
+  }
 
-    console.log(`🔧 [updateAssignment] Update data:`, updateData);
+  // Build update data
+  const updateData: any = {};
 
+  // Chỉ update các field có giá trị (không phải undefined)
+  if (dto.title !== undefined) updateData.title = dto.title;
+  if (dto.description !== undefined) updateData.description = dto.description || null;
+  if (fileUrl !== undefined) updateData.fileUrl = fileUrl;
+  if (dueDateValue !== undefined) updateData.dueDate = dueDateValue;
+  if (dto.maxScore !== undefined) updateData.maxScore = dto.maxScore;
+  if (dto.courseId !== undefined) updateData.courseId = dto.courseId || null;
+  if (dto.lessonId !== undefined) updateData.lessonId = dto.lessonId || null;
+  if (dto.status !== undefined) updateData.status = dto.status;
+
+
+  try {
     const updated = await this.prisma.assignment.update({
       where: { id },
       data: updateData,
@@ -391,7 +392,6 @@ export class AssignmentService {
 
     const stats = await this.getAssignmentStats(id);
 
-    console.log(`✅ [updateAssignment] Assignment updated successfully`);
 
     return {
       success: true,
@@ -401,11 +401,15 @@ export class AssignmentService {
         stats,
       },
     };
+  } catch (error: any) {
+    console.error(`❌ [updateAssignment] Prisma update error:`, error);
+    throw new BadRequestException(`Không thể cập nhật bài tập: ${error.message}`);
   }
+}
 
   // Xóa assignment
   async deleteAssignment(id: number) {
-    console.log(`🗑️ [deleteAssignment] Deleting assignment: ${id}`);
+
     
     const assignment = await this.prisma.assignment.findUnique({ where: { id } });
     if (!assignment) {
@@ -416,7 +420,6 @@ export class AssignmentService {
     // Xóa file nếu có
     if (assignment.fileUrl) {
       try {
-        console.log(`🗑️ [deleteAssignment] Deleting file: ${assignment.fileUrl}`);
         const deleteResult = await this.uploadService.deleteFile(assignment.fileUrl);
         
         if (!deleteResult.success) {
@@ -431,7 +434,6 @@ export class AssignmentService {
 
     await this.prisma.assignment.delete({ where: { id } });
 
-    console.log(`✅ [deleteAssignment] Assignment deleted successfully`);
 
     return {
       success: true,

@@ -32,6 +32,9 @@ import { EnrollmentsModule } from './modules/enrollment/enrollments.module';
 import { UserRoleModule } from './modules/user-role/user-role.module';
 import { AvatarIVVideoModule } from './modules/heygen/avatarIV/avatar-iv-video.module';
 import { AssignmentModule } from './modules/assignment/assignment.module';
+import { QuizModule } from './modules/quiz/quiz.module';
+import { QuizQuestionModule } from './modules/quiz-question/quiz-question.module';
+import { QuizAttemptModule } from './modules/quiz-attempt/quiz-attempt.module';
 
 @Module({
   imports: [
@@ -68,7 +71,10 @@ import { AssignmentModule } from './modules/assignment/assignment.module';
     LessonsModule,
     EnrollmentsModule,
     UserRoleModule,
-    AssignmentModule
+    AssignmentModule,
+    QuizModule,
+    QuizQuestionModule,
+    QuizAttemptModule
   ],
   controllers: [AppController],
   providers: [AppService],

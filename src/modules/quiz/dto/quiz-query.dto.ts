@@ -1,26 +1,23 @@
-// src/assignment/dto/assignment-query.dto.ts
-import { IsOptional, IsString, IsInt, IsEnum, Min } from 'class-validator'
+import { IsOptional, IsString, IsInt, IsBoolean, Min } from 'class-validator'
 import { Type, Transform } from 'class-transformer'
-import { AssignmentStatus } from '@prisma/client'
 
-export class AssignmentQueryDto {
+export class QuizQueryDto {
   @IsOptional()
   @IsInt()
   @Min(1)
-  @Type(() => Number) // 👈 TRANSFORM STRING → NUMBER
+  @Type(() => Number)
   page?: number
 
   @IsOptional()
   @IsInt()
   @Min(1)
-  @Type(() => Number) // 👈 TRANSFORM STRING → NUMBER
+  @Type(() => Number)
   limit?: number
 
   @IsOptional()
   @IsInt()
-  @Type(() => Number) // 👈 THÊM TRANSFORM
+  @Type(() => Number)
   @Transform(({ value }) => {
-    // Xử lý trường hợp empty string hoặc null
     if (value === '' || value === null || value === undefined) {
       return undefined
     }
@@ -31,7 +28,7 @@ export class AssignmentQueryDto {
 
   @IsOptional()
   @IsInt()
-  @Type(() => Number) // 👈 THÊM TRANSFORM
+  @Type(() => Number)
   @Transform(({ value }) => {
     if (value === '' || value === null || value === undefined) {
       return undefined
@@ -42,8 +39,14 @@ export class AssignmentQueryDto {
   lessonId?: number
 
   @IsOptional()
-  @IsEnum(AssignmentStatus)
-  status?: AssignmentStatus
+  @IsBoolean()
+  @Transform(({ value }) => {
+    if (value === 'true') return true
+    if (value === 'false') return false
+    if (value === true || value === false) return value
+    return undefined
+  })
+  isPublished?: boolean
 
   @IsOptional()
   @IsString()
