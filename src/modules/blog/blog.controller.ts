@@ -17,8 +17,7 @@ export class BlogController {
   constructor(private readonly blogService: BlogService) {}
 
   @Post()
-  @UseGuards(JwtAuthGuard, PermissionsGuard)
-  @Permissions('create_blogs')
+  @UseGuards(JwtAuthGuard)
   @UseInterceptors(FileInterceptor('thumb'))
   async create(
     @Body() dto: CreateBlogDto,
@@ -28,7 +27,6 @@ export class BlogController {
   }
 
   @Get()
-  @Permissions('read_blogs')
   async getBlogs(
     @Query('page') page: number = 1,
     @Query('limit') limit: number = 10,
@@ -38,19 +36,16 @@ export class BlogController {
   }
 
   @Get('slug/:slug') 
-  @Permissions('get_blog_by_slug')  
   async getBlogBySlug(@Param('slug') slug: string) {
     return this.blogService.getBlogBySlug(slug);
   }
 
   @Get('all/list')
-  @Permissions('read_all_blogs')
   async getAll(@Query('search') search: string = '') {
     return this.blogService.getAll(search);
   }
 
   @Get(':id')
-  @Permissions('get_a_blog')
   async getOne(@Param('id', ParseIntPipe) id: number) {
     return this.blogService.getById(id);
   }
@@ -58,8 +53,7 @@ export class BlogController {
 
 
   @Put(':id')
-  @UseGuards(JwtAuthGuard, PermissionsGuard)
-  @Permissions('update_blogs')
+  @UseGuards(JwtAuthGuard)
   @UseInterceptors(FileInterceptor('thumb'))
   async update(
     @Param('id', ParseIntPipe) id: number,
@@ -70,8 +64,7 @@ export class BlogController {
   }
 
   @Delete(':id')
-  @UseGuards(JwtAuthGuard, PermissionsGuard)
-  @Permissions('delete_blogs')
+  @UseGuards(JwtAuthGuard)
   async delete(@Param('id', ParseIntPipe) id: number) {
     return this.blogService.delete(id);
   }

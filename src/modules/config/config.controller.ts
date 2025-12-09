@@ -21,13 +21,13 @@ import { PermissionsGuard } from 'src/common/guards/permissions.guard';
 import { Permissions } from 'src/common/decorators/permissions.decorator';
 
 @Controller('configs')
-@UseGuards(JwtAuthGuard, PermissionsGuard) // Áp dụng cho tất cả (trừ GET public nếu cần)
+
 export class ConfigController {
   constructor(private readonly configService: ConfigService) {}
 
   // === CREATE ===
   @Post()
-  @Permissions('create_configs')
+  @UseGuards(JwtAuthGuard) 
   @UseInterceptors(
     FileFieldsInterceptor([
       { name: 'logo', maxCount: 1 },
@@ -62,7 +62,7 @@ export class ConfigController {
 
   // === UPDATE ===
   @Put(':id')
-  @Permissions('update_configs')
+  @UseGuards(JwtAuthGuard) 
   @UseInterceptors(
     FileFieldsInterceptor([
       { name: 'logo', maxCount: 1 },
@@ -82,7 +82,7 @@ export class ConfigController {
 
   // === DELETE ===
   @Delete(':id')
-  @Permissions('delete_configs')
+  @UseGuards(JwtAuthGuard) 
   async delete(@Param('id', ParseIntPipe) id: number) {
     return this.configService.delete(id);
   }
